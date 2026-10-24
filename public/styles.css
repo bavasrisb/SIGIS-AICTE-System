@@ -1,0 +1,103 @@
+/* AICTE Government Aesthetic Styling */
+:root {
+  --aicte-navy: #0d2346;
+  --aicte-blue: #1a4480;
+  --aicte-saffron: #f36c21;
+  --aicte-gold: #e5a00d;
+  --aicte-green: #0b7a40;
+  --bg-slate: #f8fafc;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: var(--bg-slate);
+  color: #1e293b;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Indian Tricolor Header Strip */
+.tricolor-strip {
+  height: 4px;
+  background: linear-gradient(90deg, #ff9933 0%, #ff9933 33.3%, #ffffff 33.3%, #ffffff 66.6%, #138808 66.6%, #138808 100%);
+}
+
+/* Pulsing Overdue Alert */
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+  }
+}
+
+.pulse-overdue {
+  animation: pulseGlow 2s infinite;
+}
+
+/* Smooth Tab transitions */
+.tab-content {
+  display: none;
+}
+.tab-content.active {
+  display: block;
+  animation: fadeIn 0.25s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Match highlight token */
+.keyword-chip {
+  background-color: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Print Optimization for AICTE Dossiers */
+@media print {
+  body {
+    background: white;
+    color: black;
+  }
+  header, nav, #globalNotice, .no-print, button, .tab-btn {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .modal {
+    position: static !important;
+    overflow: visible !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  #complaintDrawer {
+    position: static !important;
+    width: 100% !important;
+    box-shadow: none !important;
+  }
+}

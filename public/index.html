@@ -1,0 +1,1447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SIGIS — AICTE Grievance Intelligence & Overlap Monitoring System</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy: { 800: '#0d2346', 900: '#08172e' },
+            aicteBlue: '#1a4480',
+            aicteSaffron: '#f36c21',
+            aicteGreen: '#0b7a40'
+          }
+        }
+      }
+    }
+  </script>
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="min-h-screen flex flex-col bg-slate-50 text-slate-800">
+
+  <!-- Tricolor Accent Line -->
+  <div class="tricolor-strip"></div>
+
+  <!-- Header -->
+  <header class="bg-navy-800 text-white shadow-md border-b border-slate-700">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center space-x-3">
+        <div class="w-11 h-11 rounded-lg bg-white/10 flex items-center justify-center border border-white/20">
+          <i data-lucide="shield-check" class="w-6 h-6 text-amber-400"></i>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="text-xs uppercase tracking-wider font-semibold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
+              SIH 2026 • SIH26264
+            </span>
+            <span class="text-xs text-slate-300">All India Council for Technical Education</span>
+          </div>
+          <h1 class="text-lg sm:text-xl font-bold tracking-tight text-white">
+            Smart Institution Grievance Intelligence System <span class="text-amber-400 text-sm font-normal">(SIGIS)</span>
+          </h1>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-3">
+        <!-- Active User Badge & Role Switcher -->
+        <div class="flex items-center space-x-2 bg-slate-900/70 px-3 py-1.5 rounded-lg border border-slate-700">
+          <div class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
+          <div class="text-left text-xs">
+            <div id="activeUserFullName" class="font-bold text-white leading-tight">Dr. Ramesh Sharma</div>
+            <div id="activeUserRoleBadge" class="text-[10px] text-amber-400 font-medium">ADMIN • AICTE Headquarters</div>
+          </div>
+          <button onclick="openRoleSwitcherModal()" class="ml-2 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 px-2.5 py-1 rounded border border-slate-600 transition flex items-center space-x-1" title="Switch between AICTE roles for SIH demo">
+            <i data-lucide="user-check" class="w-3.5 h-3.5 text-amber-400"></i>
+            <span class="font-medium">Switch Role</span>
+          </button>
+        </div>
+
+        <button onclick="openAddModal()" class="flex items-center space-x-1.5 bg-aicteSaffron hover:bg-orange-600 text-white text-xs sm:text-sm font-medium px-3.5 py-2 rounded-md shadow-sm transition">
+          <i data-lucide="plus-circle" class="w-4 h-4"></i>
+          <span>Lodge Complaint</span>
+        </button>
+        <button onclick="confirmResetDemo()" id="btnResetDemo" class="flex items-center space-x-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs sm:text-sm font-medium px-3 py-2 rounded-md border border-slate-600 transition" title="Restore sample demo data">
+          <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+          <span class="hidden md:inline">Reset Demo</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Clear Synthetic Demo Data Disclaimer & Real-Time Status -->
+  <div id="globalNotice" class="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-xs sm:text-sm text-amber-900">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center space-x-2">
+        <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 shrink-0"></i>
+        <span>
+          <strong>DEMO SYNTHETIC DATA ENVIRONMENT:</strong> Preloaded with realistic synthetic institution cases for SIH evaluation. Demonstrates cross-bureau tracking and overlap intelligence.
+        </span>
+      </div>
+      <div class="flex items-center space-x-3 shrink-0">
+        <!-- Live SSE Status Indicator -->
+        <div id="sseIndicator" class="flex items-center space-x-1.5 text-xs text-emerald-800 bg-emerald-100/80 px-2.5 py-0.5 rounded-full border border-emerald-300">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+          <span class="font-semibold">Live Event Stream</span>
+        </div>
+        <!-- Notification Audit Button -->
+        <button onclick="openNotificationLogsModal()" class="text-xs text-amber-900 hover:text-amber-950 font-medium underline flex items-center space-x-1">
+          <i data-lucide="bell" class="w-3.5 h-3.5"></i>
+          <span>Alert Logs</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
+
+    <!-- KPI Summary Cards (Interactive Navigation) -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-3">
+      <!-- 1. Total Cases -->
+      <div onclick="navigateToComplaints('ALL')" 
+           onkeydown="if(event.key==='Enter'||event.key===' ') navigateToComplaints('ALL')"
+           role="button" tabindex="0" 
+           class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between cursor-pointer hover:shadow-md hover:border-blue-300 transition focus:outline-none focus:ring-2 focus:ring-blue-500"
+           title="Click to view all complaints">
+        <div>
+          <div class="text-xs uppercase font-semibold text-slate-500">Total Cases</div>
+          <div id="kpiTotal" class="text-2xl font-bold text-navy-800 mt-1">--</div>
+          <div class="text-[11px] text-slate-500">All AICTE Bureaus</div>
+        </div>
+        <div class="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+          <i data-lucide="files" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <!-- 2. Active / Pending -->
+      <div onclick="navigateToComplaints('ACTIVE')" 
+           onkeydown="if(event.key==='Enter'||event.key===' ') navigateToComplaints('ACTIVE')"
+           role="button" tabindex="0" 
+           class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between cursor-pointer hover:shadow-md hover:border-amber-300 transition focus:outline-none focus:ring-2 focus:ring-amber-500"
+           title="Click to view all active / pending complaints">
+        <div>
+          <div class="text-xs uppercase font-semibold text-slate-500">Active / Pending</div>
+          <div id="kpiPending" class="text-2xl font-bold text-amber-600 mt-1">--</div>
+          <div class="text-[11px] text-slate-500">Under investigation</div>
+        </div>
+        <div class="w-10 h-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+          <i data-lucide="clock" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <!-- 3. SLA Overdue -->
+      <div onclick="navigateToComplaints('OVERDUE')" 
+           onkeydown="if(event.key==='Enter'||event.key===' ') navigateToComplaints('OVERDUE')"
+           role="button" tabindex="0" 
+           class="bg-white p-4 rounded-xl border border-red-200 shadow-sm flex items-center justify-between relative overflow-hidden cursor-pointer hover:shadow-md hover:border-red-400 transition focus:outline-none focus:ring-2 focus:ring-red-500" 
+           id="overdueCard"
+           title="Click to view overdue complaints">
+        <div>
+          <div class="text-xs uppercase font-semibold text-red-600 flex items-center space-x-1">
+            <span>SLA Overdue</span>
+            <span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+          </div>
+          <div id="kpiOverdue" class="text-2xl font-bold text-red-600 mt-1">--</div>
+          <div class="text-[11px] text-red-500 font-medium">Immediate escalation</div>
+        </div>
+        <div class="w-10 h-10 rounded-lg bg-red-50 text-red-600 flex items-center justify-center">
+          <i data-lucide="alert-octagon" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <!-- 4. Overlap Alerts -->
+      <div onclick="switchTab('overlapTab')" 
+           onkeydown="if(event.key==='Enter'||event.key===' ') switchTab('overlapTab')"
+           role="button" tabindex="0" 
+           class="bg-white p-4 rounded-xl border border-purple-200 shadow-sm flex items-center justify-between cursor-pointer hover:shadow-md hover:border-purple-300 transition focus:outline-none focus:ring-2 focus:ring-purple-500"
+           title="Click to open Overlap Detection Centre">
+        <div>
+          <div class="text-xs uppercase font-semibold text-purple-700 flex items-center space-x-1">
+            <span>Overlap Alerts</span>
+          </div>
+          <div id="kpiOverlaps" class="text-2xl font-bold text-purple-700 mt-1">--</div>
+          <div class="text-[11px] text-purple-600 font-medium">Coordination required</div>
+        </div>
+        <div class="w-10 h-10 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
+          <i data-lucide="layers" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <!-- 5. Resolved Cases -->
+      <div onclick="navigateToComplaints('Resolved')" 
+           onkeydown="if(event.key==='Enter'||event.key===' ') navigateToComplaints('Resolved')"
+           role="button" tabindex="0" 
+           class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between col-span-2 md:col-span-1 cursor-pointer hover:shadow-md hover:border-emerald-300 transition focus:outline-none focus:ring-2 focus:ring-emerald-500"
+           title="Click to view resolved cases">
+        <div>
+          <div class="text-xs uppercase font-semibold text-slate-500">Resolved Cases</div>
+          <div id="kpiResolved" class="text-2xl font-bold text-emerald-600 mt-1">--</div>
+          <div id="kpiResolvedRate" class="text-[11px] text-emerald-600 font-medium">--% closure rate</div>
+        </div>
+        <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+          <i data-lucide="check-circle" class="w-5 h-5"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- Secondary Status Metrics Strip -->
+    <div class="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm mb-6 flex flex-wrap items-center justify-between text-xs gap-3">
+      <div class="flex items-center space-x-4">
+        <span class="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">Lifecycle Pipeline:</span>
+        <button onclick="navigateToComplaints('Submitted')" class="hover:underline flex items-center space-x-1 text-slate-700">
+          <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+          <span>Pending Scrutiny: <strong id="kpiPendingInitial">--</strong></span>
+        </button>
+        <span class="text-slate-300">|</span>
+        <button onclick="navigateToComplaints('UNDER_PROCESS')" class="hover:underline flex items-center space-x-1 text-indigo-700">
+          <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+          <span>Under Process: <strong id="kpiUnderProcess">--</strong></span>
+        </button>
+        <span class="text-slate-300">|</span>
+        <button onclick="navigateToComplaints('TRANSFERRED')" class="hover:underline flex items-center space-x-1 text-purple-700">
+          <span class="w-2 h-2 rounded-full bg-purple-500"></span>
+          <span>Transferred Cases: <strong id="kpiTransferred">--</strong></span>
+        </button>
+        <span class="text-slate-300">|</span>
+        <button onclick="navigateToComplaints('ESCALATED')" class="hover:underline flex items-center space-x-1 text-rose-700">
+          <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+          <span>Escalated Cases: <strong id="kpiEscalated">--</strong></span>
+        </button>
+      </div>
+      <div class="text-[11px] text-slate-400">
+        Demo SLA Framework: Critical 7d • High 15d • Medium 30d • Low 45d
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="border-b border-slate-200 mb-6 bg-white rounded-t-xl px-2 pt-2 shadow-sm">
+      <nav class="flex space-x-2 sm:space-x-4 overflow-x-auto" aria-label="Tabs">
+        <button onclick="switchTab('dashboardTab')" id="tabBtn-dashboardTab" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-aicteBlue text-aicteBlue flex items-center space-x-2 whitespace-nowrap">
+          <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
+          <span>Dashboard & Analytics</span>
+        </button>
+        <button onclick="switchTab('complaintsTab')" id="tabBtn-complaintsTab" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center space-x-2 whitespace-nowrap">
+          <i data-lucide="inbox" class="w-4 h-4"></i>
+          <span>Complaints Registry</span>
+        </button>
+        <button onclick="switchTab('overlapTab')" id="tabBtn-overlapTab" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center space-x-2 whitespace-nowrap relative">
+          <i data-lucide="copy-check" class="w-4 h-4 text-purple-600"></i>
+          <span>Overlap Detection Centre</span>
+          <span id="overlapBadgeCount" class="ml-1 bg-purple-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">--</span>
+        </button>
+        <button onclick="switchTab('institutionsTab')" id="tabBtn-institutionsTab" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center space-x-2 whitespace-nowrap">
+          <i data-lucide="building-2" class="w-4 h-4"></i>
+          <span>Institution Profiles</span>
+        </button>
+        <button onclick="switchTab('deadlineTab')" id="tabBtn-deadlineTab" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center space-x-2 whitespace-nowrap">
+          <i data-lucide="calendar-alert" class="w-4 h-4 text-red-500"></i>
+          <span>SLA & Deadlines</span>
+          <span id="overdueBadgeCount" class="ml-1 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">--</span>
+        </button>
+        <button onclick="switchTab('reportsTab')" id="tabBtn-reportsTab" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center space-x-2 whitespace-nowrap">
+          <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+          <span>Reports & Export</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- TAB 1: EXECUTIVE DASHBOARD -->
+    <div id="dashboardTab" class="tab-content active space-y-6">
+      
+      <!-- Charts Row -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Bureau Workload Chart -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Bureau Distribution</h3>
+              <p class="text-xs text-slate-500">Caseload distribution across AICTE cells</p>
+            </div>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded">Real-time</span>
+          </div>
+          <div class="h-64 flex items-center justify-center">
+            <canvas id="bureauChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Category Breakdown Chart -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Grievance Nature</h3>
+              <p class="text-xs text-slate-500">Distribution by grievance classification</p>
+            </div>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded">Classification</span>
+          </div>
+          <div class="h-64 flex items-center justify-center">
+            <canvas id="categoryChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Action Panels: Critical & Overdue Alert + Recent Audit Trail -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Left: Overdue Immediate Watchlist -->
+        <div class="lg:col-span-2 bg-white rounded-xl border border-red-200 p-5 shadow-sm">
+          <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+            <div class="flex items-center space-x-2">
+              <i data-lucide="alert-triangle" class="w-5 h-5 text-red-600"></i>
+              <h3 class="text-base font-bold text-red-700">Priority & Overdue Escalation Watchlist</h3>
+            </div>
+            <button onclick="switchTab('deadlineTab')" class="text-xs text-blue-600 hover:underline">View All Deadlines →</button>
+          </div>
+          <div id="dashboardOverdueList" class="space-y-3">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Right: Recent Activity Log -->
+        <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+          <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+            <div class="flex items-center space-x-2">
+              <i data-lucide="history" class="w-5 h-5 text-slate-600"></i>
+              <h3 class="text-base font-bold text-slate-800">Case Audit Trail</h3>
+            </div>
+            <span class="text-xs text-slate-400">Latest actions</span>
+          </div>
+          <div id="dashboardRecentActivity" class="space-y-3 text-xs">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB 2: COMPLAINT MANAGEMENT REGISTRY -->
+    <div id="complaintsTab" class="tab-content space-y-4">
+      
+      <!-- Multi-Criteria Filter Bar (SIH26264 Requirement E Compliant) -->
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+        <!-- Row 1: Search, Bureau, Category, Region -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <!-- Search -->
+          <div class="relative">
+            <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-3"></i>
+            <input type="text" id="filterSearch" placeholder="Search ID, Complainant, Institute, Region..." 
+              class="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+
+          <!-- Bureau Filter -->
+          <div>
+            <select id="filterBureau" class="w-full py-2 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="ALL">All Bureaus / Cells</option>
+              <option value="Student Grievance Redressal Cell (SGRC)">Student Grievance (SGRC)</option>
+              <option value="Approval Bureau">Approval Bureau</option>
+              <option value="Anti-Ragging Cell">Anti-Ragging Cell</option>
+              <option value="Faculty & Staff Grievance Cell">Faculty & Staff Cell</option>
+              <option value="Vigilance Cell">Vigilance Cell</option>
+              <option value="Legal Cell">Legal Cell</option>
+              <option value="Regional Bureau / Regional Office (RB)">Regional Bureau / Office (RB)</option>
+              <option value="Public Grievance Redressal Cell (PGRC)">Public Grievance Cell (PGRC)</option>
+            </select>
+          </div>
+
+          <!-- Category Filter -->
+          <div>
+            <select id="filterCategory" class="w-full py-2 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="ALL">All Categories</option>
+              <option value="Withholding of Certificates / Marksheets">Withholding of Certificates / Marksheets</option>
+              <option value="Non-Refund of Caution Deposit/Fees">Non-Refund of Caution Deposit/Fees</option>
+              <option value="Faculty Salary / 7th Pay Commission Non-Payment">Faculty Salary / 7th CPC Non-Payment</option>
+              <option value="Ragging / Harassment">Ragging / Harassment</option>
+              <option value="Unapproved Technical Courses / Infrastructure Deficit">Unapproved Courses / Infrastructure</option>
+              <option value="Capitation Fee / Financial Irregularity">Capitation Fee / Financial Irregularity</option>
+              <option value="General Administration / Public Grievance">General Admin / Public Grievance</option>
+            </select>
+          </div>
+
+          <!-- Region Filter -->
+          <div>
+            <select id="filterRegion" class="w-full py-2 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="ALL">All AICTE Regions</option>
+              <option value="North-Western">North-Western Region</option>
+              <option value="Northern">Northern Region</option>
+              <option value="Western">Western Region</option>
+              <option value="Southern">Southern Region</option>
+              <option value="South-Western">South-Western Region</option>
+              <option value="South-Central">South-Central Region</option>
+              <option value="Central">Central Region</option>
+              <option value="Eastern">Eastern Region</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Row 2: Status, Priority, Date Range, Overdue Toggle -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-1 border-t border-slate-100 text-xs">
+          <!-- Status Filter -->
+          <div>
+            <select id="filterStatus" class="w-full py-1.5 px-2.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="ALL">All Statuses</option>
+              <option value="ACTIVE">All Active / Pending</option>
+              <option value="Submitted">Submitted (New)</option>
+              <option value="UNDER_PROCESS">All Under Process</option>
+              <option value="Under Bureau Scrutiny">Under Bureau Scrutiny</option>
+              <option value="Notice Issued to Institute">Notice Issued to Institute</option>
+              <option value="Hearing / Inquiry Scheduled">Hearing / Inquiry Scheduled</option>
+              <option value="TRANSFERRED">Transferred Cases</option>
+              <option value="ESCALATED">Escalated Cases</option>
+              <option value="Resolved">Resolved / Closed</option>
+              <option value="Rejected / Closed">Rejected / Closed</option>
+            </select>
+          </div>
+
+          <!-- Priority Filter -->
+          <div>
+            <select id="filterPriority" class="w-full py-1.5 px-2.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="ALL">All Priorities</option>
+              <option value="CRITICAL">CRITICAL</option>
+              <option value="HIGH">HIGH</option>
+              <option value="MEDIUM">MEDIUM</option>
+              <option value="LOW">LOW</option>
+            </select>
+          </div>
+
+          <!-- Date From -->
+          <div class="flex items-center space-x-1.5">
+            <span class="text-slate-400 whitespace-nowrap">From:</span>
+            <input type="date" id="filterDateFrom" class="w-full py-1 px-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+
+          <!-- Date To -->
+          <div class="flex items-center space-x-1.5">
+            <span class="text-slate-400 whitespace-nowrap">To:</span>
+            <input type="date" id="filterDateTo" class="w-full py-1 px-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+
+          <!-- Overdue & Reset -->
+          <div class="flex items-center justify-between space-x-2">
+            <label class="flex items-center space-x-1 cursor-pointer text-slate-700 font-medium">
+              <input type="checkbox" id="filterOverdueOnly" class="rounded border-slate-300 text-red-600 focus:ring-red-500">
+              <span class="text-red-700 font-semibold text-[11px]">Overdue Only</span>
+            </label>
+            <button onclick="resetFilters()" class="text-blue-600 hover:text-blue-800 font-medium flex items-center space-x-1 text-xs">
+              <i data-lucide="filter-x" class="w-3.5 h-3.5"></i>
+              <span>Clear</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Row 3: Result Count -->
+        <div class="flex items-center justify-between text-xs pt-1 text-slate-500">
+          <span id="filteredResultsCount">Showing -- cases</span>
+          <span class="text-[11px] text-slate-400">All filters operate dynamically on live SQLite records</span>
+        </div>
+      </div>
+
+      <!-- Complaints Data Table -->
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs sm:text-sm">
+            <thead class="bg-slate-100 text-slate-600 uppercase text-[11px] font-semibold tracking-wider border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-4">Case ID</th>
+                <th class="py-3 px-4">Target Institution & Region</th>
+                <th class="py-3 px-4">Bureau / Cell</th>
+                <th class="py-3 px-4">Subject & Complainant</th>
+                <th class="py-3 px-4">Priority</th>
+                <th class="py-3 px-4">Status</th>
+                <th class="py-3 px-4">SLA Deadline</th>
+                <th class="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="complaintsTableBody" class="divide-y divide-slate-200">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB 3: OVERLAP DETECTION CENTRE -->
+    <div id="overlapTab" class="tab-content space-y-6">
+      
+      <!-- Overlap Intelligence Banner -->
+      <div class="bg-gradient-to-r from-purple-900 to-indigo-900 text-white rounded-xl p-6 shadow-md border border-purple-800">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div class="flex items-center space-x-2 mb-1">
+              <span class="bg-purple-500/30 text-purple-200 text-xs px-2.5 py-0.5 rounded-full font-semibold border border-purple-400/30">
+                AICTE Intelligence Hub
+              </span>
+              <span class="text-xs text-purple-200">Solving Cross-Bureau Departmental Silos</span>
+            </div>
+            <h2 class="text-xl font-bold">Cross-Bureau Overlap & Multi-Channel Duplicate Detection</h2>
+            <p class="text-purple-200 text-xs sm:text-sm mt-1 max-w-3xl">
+              Whistleblowers and aggrieved students frequently file identical grievances across separate AICTE bureaus (e.g., SGRC, Anti-Ragging, Approval Bureau, Regional Bureau, PGRC). The SIGIS Overlap Engine computes TF-IDF text similarity, category correlation, and AICTE Permanent Institution ID anchoring to uncover coordination-required cases.
+            </p>
+          </div>
+          <div class="shrink-0 bg-white/10 p-4 rounded-xl border border-white/15 text-center">
+            <div class="text-2xl font-bold text-amber-300" id="overlapDetectionCount">--</div>
+            <div class="text-[11px] text-purple-200 uppercase font-semibold tracking-wider">Potential Pairs Flagged</div>
+          </div>
+        </div>
+        
+        <div class="mt-4 pt-4 border-t border-purple-700/60 flex items-center text-xs text-purple-200 space-x-2">
+          <i data-lucide="shield-alert" class="w-4 h-4 text-amber-400 shrink-0"></i>
+          <span><strong>Human Review Policy:</strong> A flagged pair represents <em>“Potential Overlapping Cases – Coordination Required”</em>, not an automatic duplicate. To uphold evidentiary integrity, complaints are <strong>never automatically merged, deleted, or rejected</strong> without authorized human officer adjudication.</span>
+        </div>
+      </div>
+
+      <!-- Overlap Pairs List -->
+      <div id="overlapCardsContainer" class="space-y-4">
+        <!-- Rendered dynamically -->
+      </div>
+
+    </div>
+
+    <!-- TAB 4: INSTITUTION PROFILES & HISTORY -->
+    <div id="institutionsTab" class="tab-content space-y-6">
+      
+      <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-bold text-slate-800">AICTE Approved Institution Grievance Registry</h2>
+          <p class="text-xs sm:text-sm text-slate-500">Permanent Institution ID records, regional offices, risk ratings, and consolidated complaint history across all cells.</p>
+        </div>
+        <div class="w-full sm:w-72 relative">
+          <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-3"></i>
+          <input type="text" id="instSearchInput" placeholder="Filter by name, ID, state, region..." 
+            class="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+      </div>
+
+      <!-- Grid of Institutions -->
+      <div id="institutionsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <!-- Dynamically rendered -->
+      </div>
+
+    </div>
+
+    <!-- TAB 5: SLA & DEADLINE RADAR -->
+    <div id="deadlineTab" class="tab-content space-y-6">
+      
+      <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+        <div>
+          <div class="flex items-center space-x-2">
+            <i data-lucide="clock-alert" class="w-5 h-5 text-red-600"></i>
+            <h2 class="text-lg font-bold text-slate-800">SLA Tracking & Resolution Deadlines</h2>
+          </div>
+          <p class="text-xs sm:text-sm text-slate-500">Cases prioritized by urgency, time to target resolution date, and overdue count.</p>
+        </div>
+        <div class="text-right">
+          <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-red-100 text-red-700" id="totalOverdueBadge">
+            -- Overdue Cases
+          </span>
+        </div>
+      </div>
+
+      <!-- Overdue Radar Table -->
+      <div class="bg-white rounded-xl border border-red-200 shadow-sm overflow-hidden">
+        <div class="bg-red-50/60 px-5 py-3 border-b border-red-200 flex items-center justify-between">
+          <span class="text-xs font-bold text-red-800 uppercase tracking-wider flex items-center space-x-1.5">
+            <i data-lucide="alert-octagon" class="w-4 h-4 text-red-600"></i>
+            <span>Cases Exceeding AICTE Target Resolution Deadline</span>
+          </span>
+          <span class="text-xs text-red-700">Immediate Action Mandate</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs sm:text-sm">
+            <thead class="bg-slate-50 text-slate-600 uppercase text-[11px] font-semibold border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-4">Case ID</th>
+                <th class="py-3 px-4">Institution & Region</th>
+                <th class="py-3 px-4">Bureau Responsible</th>
+                <th class="py-3 px-4">Target Date</th>
+                <th class="py-3 px-4">Days Overdue</th>
+                <th class="py-3 px-4">Status</th>
+                <th class="py-3 px-4 text-right">Escalate / Update</th>
+              </tr>
+            </thead>
+            <tbody id="overdueTableBody" class="divide-y divide-slate-200">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Approaching Deadlines Table -->
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center space-x-1.5">
+            <i data-lucide="timer" class="w-4 h-4 text-amber-500"></i>
+            <span>Upcoming Resolution Deadlines (Next 30 Days)</span>
+          </span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs sm:text-sm">
+            <thead class="bg-slate-50 text-slate-600 uppercase text-[11px] font-semibold border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-4">Case ID</th>
+                <th class="py-3 px-4">Institution & Region</th>
+                <th class="py-3 px-4">Bureau</th>
+                <th class="py-3 px-4">Target Date</th>
+                <th class="py-3 px-4">Days Remaining</th>
+                <th class="py-3 px-4">Priority</th>
+                <th class="py-3 px-4 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="upcomingTableBody" class="divide-y divide-slate-200">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB 6: REPORTS & EXPORT (SIH26264 Multi-Dimensional Audits) -->
+    <div id="reportsTab" class="tab-content space-y-6">
+      
+      <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-bold text-slate-800">Analytical Reports & Case Dossier Generation</h2>
+          <p class="text-xs sm:text-sm text-slate-500">Multi-dimensional institutional governance audits, regional compliance, ageing analysis, and CSV export.</p>
+        </div>
+        <div class="flex items-center space-x-3">
+          <button onclick="exportToCSV()" class="flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-medium px-4 py-2 rounded-lg transition shadow-sm">
+            <i data-lucide="download" class="w-4 h-4"></i>
+            <span>Export CSV Dataset</span>
+          </button>
+          <button onclick="window.print()" class="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs sm:text-sm font-medium px-4 py-2 rounded-lg transition shadow-sm">
+            <i data-lucide="printer" class="w-4 h-4"></i>
+            <span>Print Report</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Pending Case Ageing Analysis Grid -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white p-4 rounded-xl border border-emerald-200 shadow-sm">
+          <div class="text-xs font-semibold text-emerald-700 uppercase">Ageing: &lt; 15 Days</div>
+          <div id="ageingUnder15" class="text-2xl font-bold text-emerald-800 mt-1">--</div>
+          <div class="text-[11px] text-slate-500">Fresh / active investigations</div>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-blue-200 shadow-sm">
+          <div class="text-xs font-semibold text-blue-700 uppercase">Ageing: 15 - 30 Days</div>
+          <div id="ageing15to30" class="text-2xl font-bold text-blue-800 mt-1">--</div>
+          <div class="text-[11px] text-slate-500">Standard inquiry cycle</div>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-amber-200 shadow-sm">
+          <div class="text-xs font-semibold text-amber-700 uppercase">Ageing: 30 - 60 Days</div>
+          <div id="ageing30to60" class="text-2xl font-bold text-amber-800 mt-1">--</div>
+          <div class="text-[11px] text-slate-500">Requires desk follow-up</div>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-red-200 shadow-sm">
+          <div class="text-xs font-semibold text-red-700 uppercase">Ageing: &gt; 60 Days</div>
+          <div id="ageingOver60" class="text-2xl font-bold text-red-800 mt-1">--</div>
+          <div class="text-[11px] text-red-500 font-semibold">Priority escalation list</div>
+        </div>
+      </div>
+
+      <!-- Bureau Compliance Scorecard -->
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide mb-3">Bureau Performance & SLA Compliance Scorecard</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs sm:text-sm">
+            <thead class="bg-slate-100 text-slate-600 uppercase text-[11px] font-semibold">
+              <tr>
+                <th class="py-3 px-4">AICTE Bureau / Cell</th>
+                <th class="py-3 px-4 text-center">Total Received</th>
+                <th class="py-3 px-4 text-center">Resolved / Disposed</th>
+                <th class="py-3 px-4 text-center">Active</th>
+                <th class="py-3 px-4 text-center">Overdue</th>
+                <th class="py-3 px-4 text-center">Disposal Rate</th>
+              </tr>
+            </thead>
+            <tbody id="bureauScorecardBody" class="divide-y divide-slate-200">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Region-Wise Grievance Audit Scorecard -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+          <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide mb-3">Region-Wise Grievance Audit</h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-100 text-slate-600 uppercase text-[10px] font-semibold">
+                <tr>
+                  <th class="py-2.5 px-3">AICTE Region</th>
+                  <th class="py-2.5 px-3 text-center">Total</th>
+                  <th class="py-2.5 px-3 text-center">Active</th>
+                  <th class="py-2.5 px-3 text-center">Resolved</th>
+                  <th class="py-2.5 px-3 text-center">Disposal Rate</th>
+                </tr>
+              </thead>
+              <tbody id="regionScorecardBody" class="divide-y divide-slate-200">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Overlap & Duplicate Case Statistics -->
+        <div class="bg-white rounded-xl border border-purple-200 shadow-sm p-5">
+          <h3 class="text-sm font-bold text-purple-900 uppercase tracking-wide mb-3 flex items-center space-x-1.5">
+            <i data-lucide="layers" class="w-4 h-4 text-purple-600"></i>
+            <span>Overlap & Duplicate Intelligence Statistics</span>
+          </h3>
+          <div class="grid grid-cols-2 gap-3 text-xs mb-4">
+            <div class="bg-purple-50 p-3 rounded-lg border border-purple-200">
+              <span class="text-slate-500 block">Flagged Overlap Pairs</span>
+              <strong id="repOverlapFlagged" class="text-xl font-bold text-purple-800 font-mono">--</strong>
+            </div>
+            <div class="bg-emerald-50 p-3 rounded-lg border border-emerald-200">
+              <span class="text-slate-500 block">Confirmed Linked Cases</span>
+              <strong id="repOverlapLinked" class="text-xl font-bold text-emerald-800 font-mono">--</strong>
+            </div>
+            <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+              <span class="text-slate-500 block">Marked Distinct (False Alarm)</span>
+              <strong id="repOverlapDismissed" class="text-xl font-bold text-slate-700 font-mono">--</strong>
+            </div>
+            <div class="bg-amber-50 p-3 rounded-lg border border-amber-200">
+              <span class="text-slate-500 block">Pending Officer Review</span>
+              <strong id="repOverlapPending" class="text-xl font-bold text-amber-800 font-mono">--</strong>
+            </div>
+          </div>
+          <p class="text-[11px] text-slate-500">Cross-bureau linking coordinates investigations without destructive data merging.</p>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- ==================== MODALS & DRAWERS ==================== -->
+
+  <!-- 1. ADD COMPLAINT MODAL (Fixed Complainant Phone & Enhanced Fields) -->
+  <div id="addModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 sticky top-0 z-10">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="file-plus" class="w-5 h-5 text-aicteSaffron"></i>
+          <h3 class="text-base font-bold text-navy-800">Lodge Grievance into Central AICTE Repository</h3>
+        </div>
+        <button onclick="closeAddModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="addComplaintForm" onsubmit="submitAddComplaint(event)" class="p-6 space-y-4">
+        
+        <!-- Target Institution -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Target Institution *</label>
+          <select id="addInstSelect" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 bg-white">
+            <option value="">Select AICTE Approved Institution...</option>
+          </select>
+        </div>
+
+        <!-- Bureau Assignment & Category -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Assigned Bureau / Cell *</label>
+            <select id="addBureau" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="Student Grievance Redressal Cell (SGRC)">Student Grievance (SGRC)</option>
+              <option value="Approval Bureau">Approval Bureau</option>
+              <option value="Anti-Ragging Cell">Anti-Ragging Cell</option>
+              <option value="Faculty & Staff Grievance Cell">Faculty & Staff Cell</option>
+              <option value="Vigilance Cell">Vigilance Cell</option>
+              <option value="Legal Cell">Legal Cell</option>
+              <option value="Regional Bureau / Regional Office (RB)">Regional Bureau / Office (RB)</option>
+              <option value="Public Grievance Redressal Cell (PGRC)">Public Grievance Cell (PGRC)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Grievance Category *</label>
+            <select id="addCategory" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="Withholding of Certificates / Marksheets">Withholding of Certificates / Marksheets</option>
+              <option value="Non-Refund of Caution Deposit/Fees">Non-Refund of Caution Deposit/Fees</option>
+              <option value="Faculty Salary / 7th Pay Commission Non-Payment">Faculty Salary / 7th CPC Non-Payment</option>
+              <option value="Ragging / Harassment">Ragging / Harassment</option>
+              <option value="Unapproved Technical Courses / Infrastructure Deficit">Unapproved Courses / Infrastructure Deficit</option>
+              <option value="Capitation Fee / Financial Irregularity">Capitation Fee / Financial Irregularity</option>
+              <option value="General Administration / Public Grievance">General Administration / Public Grievance</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Priority & Target SLA Date -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Priority Level *</label>
+            <select id="addPriority" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="MEDIUM">MEDIUM (Standard 30 Days SLA)</option>
+              <option value="HIGH">HIGH (15 Days SLA)</option>
+              <option value="CRITICAL">CRITICAL (7 Days SLA - Ragging / Safety)</option>
+              <option value="LOW">LOW (45 Days SLA)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Target Resolution Date *</label>
+            <input type="date" id="addTargetDate" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+
+        <!-- Complainant Profile (Includes addCompPhone) -->
+        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+          <span class="text-xs font-bold text-slate-700 uppercase tracking-wider block">Complainant Information</span>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label class="block text-[11px] font-medium text-slate-600 mb-1">Full Name *</label>
+              <input type="text" id="addCompName" required placeholder="e.g. Ramesh Chandra" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <label class="block text-[11px] font-medium text-slate-600 mb-1">Role *</label>
+              <select id="addCompRole" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500 bg-white">
+                <option value="Student">Student</option>
+                <option value="Faculty">Faculty</option>
+                <option value="Parent">Parent</option>
+                <option value="Whistleblower">Whistleblower</option>
+                <option value="Alumnus">Alumnus</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[11px] font-medium text-slate-600 mb-1">Email</label>
+              <input type="email" id="addCompEmail" placeholder="student@example.com" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <label class="block text-[11px] font-medium text-slate-600 mb-1">Mobile / Phone</label>
+              <input type="tel" id="addCompPhone" placeholder="+91 98765 43210" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500">
+            </div>
+          </div>
+        </div>
+
+        <!-- Assigned Officer & Supporting Documents -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Assigned Desk Officer</label>
+            <input type="text" id="addAssignedOfficer" placeholder="AICTE Grievance Desk Officer" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Supporting Document Reference</label>
+            <input type="text" id="addSupportingDocs" placeholder="e.g. DOC-FEE-REC-2026.pdf" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+
+        <!-- Real Supporting Document File Upload -->
+        <div class="bg-blue-50/50 p-3 rounded-lg border border-blue-200/60">
+          <label class="block text-xs font-semibold text-blue-900 uppercase mb-1 flex items-center space-x-1">
+            <i data-lucide="paperclip" class="w-3.5 h-3.5 text-blue-600"></i>
+            <span>Attach Evidence Document (Optional — PDF, PNG, JPG/JPEG, Max 5MB)</span>
+          </label>
+          <input type="file" id="addDocumentFile" accept=".pdf,.png,.jpg,.jpeg" class="w-full text-xs text-slate-600 file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-100 file:text-blue-800 hover:file:bg-blue-200 border border-slate-300 rounded-lg p-1.5 bg-white">
+          <p class="text-[11px] text-slate-500 mt-1">Uploaded files are verified for MIME signatures and stored in secure AICTE vault storage.</p>
+        </div>
+
+        <!-- Subject & Detailed Description -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Grievance Subject *</label>
+          <input type="text" id="addSubject" required placeholder="Concise statement of grievance..." class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Detailed Description *</label>
+          <textarea id="addDescription" required rows="4" placeholder="Provide full context, dates, department names, and specific institutional non-compliance..." class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"></textarea>
+          <p class="text-[11px] text-slate-500 mt-1">This text will be analyzed by the Overlap Detection Engine to discover related multi-channel cases.</p>
+        </div>
+
+        <!-- Footer Buttons -->
+        <div class="pt-4 border-t border-slate-200 flex items-center justify-end space-x-3">
+          <button type="button" onclick="closeAddModal()" class="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 font-medium">Cancel</button>
+          <button type="submit" id="btnSubmitComplaint" class="px-5 py-2 text-sm bg-aicteSaffron hover:bg-orange-600 text-white font-medium rounded-lg shadow-sm transition flex items-center space-x-2">
+            <i data-lucide="check" class="w-4 h-4"></i>
+            <span>Register Complaint</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 2. EDIT / REASSIGN COMPLAINT MODAL -->
+  <div id="editModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-xl w-full max-h-[92vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 sticky top-0 z-10">
+        <div>
+          <h3 class="text-base font-bold text-navy-800">Update Complaint & Bureau Routing</h3>
+          <span id="editCaseIdBadge" class="text-xs font-mono font-bold text-blue-600">--</span>
+        </div>
+        <button onclick="closeEditModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="editComplaintForm" onsubmit="submitEditComplaint(event)" class="p-6 space-y-4">
+        <input type="hidden" id="editComplaintId">
+
+        <!-- Status -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Grievance Status *</label>
+          <select id="editStatus" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 bg-white">
+            <option value="Submitted">Submitted (New Case)</option>
+            <option value="Under Bureau Scrutiny">Under Bureau Scrutiny</option>
+            <option value="Notice Issued to Institute">Notice Issued to Institute</option>
+            <option value="Hearing / Inquiry Scheduled">Hearing / Inquiry Scheduled</option>
+            <option value="Transferred">Transferred (Forwarded to Another Cell)</option>
+            <option value="Escalated">Escalated (Higher Vigilance / Apex Review)</option>
+            <option value="Resolved">Resolved / Disposed</option>
+            <option value="Rejected / Closed">Rejected / Closed</option>
+          </select>
+        </div>
+
+        <!-- Bureau Reassignment -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Reassign Bureau / Cell *</label>
+          <select id="editBureau" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 bg-white">
+            <option value="Student Grievance Redressal Cell (SGRC)">Student Grievance Redressal Cell (SGRC)</option>
+            <option value="Approval Bureau">Approval Bureau</option>
+            <option value="Anti-Ragging Cell">Anti-Ragging Cell</option>
+            <option value="Faculty & Staff Grievance Cell">Faculty & Staff Grievance Cell</option>
+            <option value="Vigilance Cell">Vigilance Cell</option>
+            <option value="Legal Cell">Legal Cell</option>
+            <option value="Regional Bureau / Regional Office (RB)">Regional Bureau / Office (RB)</option>
+            <option value="Public Grievance Redressal Cell (PGRC)">Public Grievance Redressal Cell (PGRC)</option>
+          </select>
+        </div>
+
+        <!-- Priority & SLA -->
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Priority</label>
+            <select id="editPriority" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="CRITICAL">CRITICAL</option>
+              <option value="HIGH">HIGH</option>
+              <option value="MEDIUM">MEDIUM</option>
+              <option value="LOW">LOW</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Target Deadline</label>
+            <input type="date" id="editTargetDate" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+
+        <!-- Assigned Officer & Next Action -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Assigned Officer</label>
+            <input type="text" id="editAssignedOfficer" placeholder="Officer Name / Role" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Next Action Mandate</label>
+            <input type="text" id="editNextAction" placeholder="e.g. Issue Show Cause Notice to Director" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+
+        <!-- Supporting Document Reference -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Supporting Document Reference</label>
+          <input type="text" id="editSupportingDocs" placeholder="e.g. NOTICE-REF-9921.pdf" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <!-- Officer Audit Remarks -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Action Remarks / Order Summary</label>
+          <textarea id="editRemarks" rows="3" placeholder="State official notes, notice dispatch reference, or final resolution remarks..." class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Reviewing AICTE Officer Name</label>
+          <input type="text" id="editOfficer" value="AICTE Grievance Desk Officer" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <div class="pt-4 border-t border-slate-200 flex items-center justify-end space-x-3">
+          <button type="button" onclick="closeEditModal()" class="px-4 py-2 text-sm text-slate-600 hover:text-slate-800">Cancel</button>
+          <button type="submit" class="px-5 py-2 text-sm bg-aicteBlue hover:bg-blue-900 text-white font-medium rounded-lg shadow-sm transition">
+            Save Case Changes
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. COMPLAINT DOSSIER & AUDIT HISTORY DRAWER -->
+  <div id="complaintDrawer" class="fixed inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl z-50 transform translate-x-full transition-transform duration-300 ease-in-out border-l border-slate-200 flex flex-col">
+    <!-- Drawer Header -->
+    <div class="px-6 py-4 bg-navy-800 text-white flex items-center justify-between">
+      <div>
+        <div class="flex items-center space-x-2">
+          <span id="drawerCaseId" class="text-sm font-mono font-bold text-amber-400">AICTE-GRV-2026-000</span>
+          <span id="drawerPriorityBadge" class="text-[10px] font-bold px-2 py-0.5 rounded">--</span>
+        </div>
+        <h3 id="drawerSubject" class="text-base font-bold text-white mt-1 line-clamp-1">Grievance Subject</h3>
+      </div>
+      <div class="flex items-center space-x-2">
+        <button onclick="printCaseDossier()" class="p-1.5 text-slate-300 hover:text-white rounded bg-white/10" title="Print Case Dossier">
+          <i data-lucide="printer" class="w-4 h-4"></i>
+        </button>
+        <button onclick="closeDrawer()" class="p-1.5 text-slate-300 hover:text-white rounded bg-white/10">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Drawer Content -->
+    <div class="flex-1 overflow-y-auto p-6 space-y-6">
+      
+      <!-- Key Status Strip -->
+      <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <div>
+          <span class="text-slate-500 block">Status:</span>
+          <span id="drawerStatusBadge" class="font-bold text-slate-800">--</span>
+        </div>
+        <div>
+          <span class="text-slate-500 block">Assigned Bureau:</span>
+          <span id="drawerBureau" class="font-bold text-slate-800">--</span>
+        </div>
+        <div>
+          <span class="text-slate-500 block">SLA Deadline:</span>
+          <span id="drawerDeadline" class="font-bold text-slate-800">--</span>
+        </div>
+        <div>
+          <span class="text-slate-500 block">Assigned Officer:</span>
+          <span id="drawerOfficer" class="font-bold text-slate-800">--</span>
+        </div>
+      </div>
+
+      <!-- Action Tracking Pipeline -->
+      <div class="bg-blue-50/60 p-4 rounded-xl border border-blue-200 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <div>
+          <span class="text-blue-600 block uppercase font-bold text-[10px]">Last Action Recorded:</span>
+          <span id="drawerLastAction" class="font-semibold text-slate-800">--</span>
+        </div>
+        <div>
+          <span class="text-blue-600 block uppercase font-bold text-[10px]">Next Action Scheduled:</span>
+          <span id="drawerNextAction" class="font-semibold text-slate-800">--</span>
+        </div>
+      </div>
+
+      <!-- Overlap Warning Banner (if related cases exist) -->
+      <div id="drawerOverlapAlert" class="bg-purple-50 border border-purple-200 rounded-xl p-4 hidden">
+        <div class="flex items-start space-x-3">
+          <i data-lucide="layers" class="w-5 h-5 text-purple-600 mt-0.5 shrink-0"></i>
+          <div class="flex-1">
+            <h4 class="text-xs font-bold text-purple-900 uppercase tracking-wide">Potential Overlapping Cases – Coordination Required</h4>
+            <p id="drawerOverlapDesc" class="text-xs text-purple-700 mt-0.5">High lexical and institutional overlap identified. Cross-referencing recommended.</p>
+            <div id="drawerOverlapPairsList" class="mt-2 space-y-1"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Linked Group (if verified duplicate) -->
+      <div id="drawerLinkedBanner" class="bg-blue-50 border border-blue-200 rounded-xl p-4 hidden">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="link" class="w-4 h-4 text-blue-600"></i>
+          <span class="text-xs font-bold text-blue-900">Linked Cross-Bureau Case Group: <span id="drawerGroupId" class="font-mono">--</span></span>
+        </div>
+        <p class="text-xs text-blue-700 mt-1">This case is formally linked to related investigations across AICTE cells. Files remain distinct.</p>
+      </div>
+
+      <!-- Institution Card -->
+      <div class="border border-slate-200 rounded-xl p-4">
+        <span class="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Target Institution Profile</span>
+        <div class="flex items-start justify-between">
+          <div>
+            <h4 id="drawerInstName" class="text-sm font-bold text-slate-800">--</h4>
+            <div class="text-xs text-slate-500 mt-0.5">
+              Permanent ID: <span id="drawerInstId" class="font-mono font-semibold text-slate-700">--</span> | 
+              <span id="drawerInstLocation">--</span> | 
+              Region: <span id="drawerInstRegion" class="font-semibold text-slate-700">--</span>
+            </div>
+            <div class="text-xs text-slate-500 mt-0.5" id="drawerInstType">Type: --</div>
+            <div class="text-xs text-slate-500 mt-0.5" id="drawerInstAddress">Address: --</div>
+          </div>
+          <span id="drawerInstRiskBadge" class="text-xs px-2 py-0.5 rounded font-bold">-- Risk</span>
+        </div>
+      </div>
+
+      <!-- Complainant Profile -->
+      <div class="border border-slate-200 rounded-xl p-4">
+        <span class="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Complainant Details</span>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <div><span class="text-slate-500">Name:</span> <strong id="drawerCompName">--</strong> (<span id="drawerCompRole">--</span>)</div>
+          <div><span class="text-slate-500">Email:</span> <span id="drawerCompEmail">--</span></div>
+          <div><span class="text-slate-500">Phone:</span> <span id="drawerCompPhone">--</span></div>
+          <div><span class="text-slate-500">Filed On:</span> <span id="drawerCreatedAt">--</span></div>
+        </div>
+      </div>
+
+      <!-- Full Grievance Statement -->
+      <div>
+        <span class="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Grievance Narrative</span>
+        <div id="drawerDescription" class="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-700 whitespace-pre-line leading-relaxed">
+          --
+        </div>
+      </div>
+
+      <!-- Supporting Evidence Documents Section -->
+      <div class="border border-slate-200 rounded-xl p-4 bg-white">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-bold text-slate-600 uppercase tracking-wide flex items-center space-x-1.5">
+            <i data-lucide="paperclip" class="w-4 h-4 text-blue-600"></i>
+            <span>Supporting Evidence Documents</span>
+          </span>
+          <span id="drawerDocsBadge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">0 Attachments</span>
+        </div>
+        <p class="text-[11px] text-slate-500 mb-3">Authentic uploaded files with verified MIME headers and server-controlled storage.</p>
+        
+        <!-- Attached Files List -->
+        <div id="drawerDocsContainer" class="space-y-2 mb-3">
+          <div class="text-xs text-slate-400 italic py-1">No attachments uploaded for this case.</div>
+        </div>
+
+        <!-- Add Document File Input -->
+        <div id="drawerUploadBox" class="pt-3 border-t border-slate-100">
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Attach Supplementary Evidence (PDF, PNG, JPG/JPEG)</label>
+          <div class="flex items-center space-x-2">
+            <input type="file" id="drawerUploadInput" accept=".pdf,.png,.jpg,.jpeg" class="w-full text-xs text-slate-600 border border-slate-300 rounded-lg p-1.5 bg-slate-50">
+            <button type="button" onclick="uploadDrawerDocument()" class="px-3 py-1.5 bg-aicteBlue hover:bg-blue-900 text-white text-xs font-medium rounded-lg shrink-0 flex items-center space-x-1">
+              <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+              <span>Upload</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resolution Remarks (if any) -->
+      <div id="drawerResolutionBox" class="hidden">
+        <span class="text-xs font-bold text-emerald-700 uppercase tracking-wider block mb-1">Official Resolution Findings</span>
+        <div id="drawerResolutionText" class="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 whitespace-pre-line">
+          --
+        </div>
+      </div>
+
+      <!-- Chronological Audit Trail Timeline -->
+      <div>
+        <span class="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-3">Case History & Audit Trail</span>
+        <div id="drawerHistoryTimeline" class="space-y-4 border-l-2 border-slate-200 ml-3 pl-4 text-xs">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 4. OVERLAP SIDE-BY-SIDE REVIEW MODAL -->
+  <div id="overlapReviewModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[92vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-purple-50 sticky top-0 z-10">
+        <div>
+          <div class="flex items-center space-x-2">
+            <i data-lucide="layers" class="w-5 h-5 text-purple-600"></i>
+            <h3 class="text-base font-bold text-purple-900">Side-by-Side Overlap Review & Adjudication</h3>
+          </div>
+          <p class="text-xs text-purple-700">Strict Human-in-the-Loop Verification — Records are linked for coordination, never merged automatically.</p>
+        </div>
+        <button onclick="closeOverlapModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="p-6 space-y-6">
+        
+        <!-- Similarity Meter Bar -->
+        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold uppercase text-slate-600">Calculated Overlap Confidence Score</span>
+            <span id="reviewScoreBadge" class="text-sm font-bold text-purple-700">84% Match</span>
+          </div>
+          <div class="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+            <div id="reviewScoreBar" class="bg-purple-600 h-2.5 rounded-full transition-all" style="width: 84%"></div>
+          </div>
+          <div id="reviewReasonsList" class="mt-3 flex flex-wrap gap-2 text-[11px]">
+            <!-- Reasons badges -->
+          </div>
+        </div>
+
+        <!-- Side-by-side comparison grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Case A -->
+          <div class="border border-slate-200 rounded-xl p-4 bg-white flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span id="reviewCompAId" class="text-xs font-mono font-bold text-blue-600">AICTE-GRV-2026-001</span>
+                <span id="reviewCompABureau" class="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-medium">SGRC</span>
+              </div>
+              <h4 id="reviewCompASubject" class="text-xs font-bold text-slate-800 mb-2">Subject A</h4>
+              <div class="text-[11px] text-slate-500 mb-2">
+                Complainant: <strong id="reviewCompAName">--</strong> (<span id="reviewCompARole">--</span>)
+              </div>
+              <div id="reviewCompADesc" class="text-xs text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-100 max-h-48 overflow-y-auto whitespace-pre-line">
+                --
+              </div>
+            </div>
+            <div class="mt-3 pt-2 border-t border-slate-100 text-[11px] text-slate-500">
+              Institution: <span id="reviewCompAInst">--</span>
+            </div>
+          </div>
+
+          <!-- Case B -->
+          <div class="border border-slate-200 rounded-xl p-4 bg-white flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span id="reviewCompBId" class="text-xs font-mono font-bold text-purple-600">AICTE-GRV-2026-002</span>
+                <span id="reviewCompBBureau" class="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-medium">Approval Bureau</span>
+              </div>
+              <h4 id="reviewCompBSubject" class="text-xs font-bold text-slate-800 mb-2">Subject B</h4>
+              <div class="text-[11px] text-slate-500 mb-2">
+                Complainant: <strong id="reviewCompBName">--</strong> (<span id="reviewCompBRole">--</span>)
+              </div>
+              <div id="reviewCompBDesc" class="text-xs text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-100 max-h-48 overflow-y-auto whitespace-pre-line">
+                --
+              </div>
+            </div>
+            <div class="mt-3 pt-2 border-t border-slate-100 text-[11px] text-slate-500">
+              Institution: <span id="reviewCompBInst">--</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Matched Key Tokens -->
+        <div>
+          <span class="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Intersecting Lexical Tokens & Keywords</span>
+          <div id="reviewTokensContainer" class="flex flex-wrap gap-1.5">
+            <!-- Keyword chips -->
+          </div>
+        </div>
+
+        <!-- Human Review Form -->
+        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+          <span class="text-xs font-bold text-slate-800 uppercase tracking-wider block">Officer Determination & Review Protocol</span>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Review Notes & Justification</label>
+            <textarea id="reviewOfficerNotes" rows="2" placeholder="Record evidence of duplicate submission, shared incidents, or reasons for distinction..." class="w-full text-xs sm:text-sm border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-purple-500"></textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Officer Name / Designation</label>
+            <input type="text" id="reviewOfficerName" value="Director, AICTE Central Grievance Cell" class="w-full text-xs sm:text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-purple-500">
+          </div>
+        </div>
+
+        <!-- Decision Action Buttons -->
+        <div class="flex flex-col sm:flex-row items-center justify-end gap-3 pt-2">
+          <button type="button" onclick="closeOverlapModal()" class="w-full sm:w-auto px-4 py-2 text-xs text-slate-600 hover:text-slate-800 font-medium">Cancel</button>
+          <button type="button" onclick="submitReviewDecision('DISMISSED_DISTINCT')" class="w-full sm:w-auto px-4 py-2 text-xs border border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold rounded-lg transition flex items-center justify-center space-x-1.5">
+            <i data-lucide="shield-x" class="w-4 h-4 text-slate-500"></i>
+            <span>Mark Distinct (False Alarm)</span>
+          </button>
+          <button type="button" onclick="submitReviewDecision('CONFIRMED_RELATED')" class="w-full sm:w-auto px-5 py-2 text-xs bg-purple-700 hover:bg-purple-800 text-white font-semibold rounded-lg shadow-sm transition flex items-center justify-center space-x-1.5">
+            <i data-lucide="link" class="w-4 h-4"></i>
+            <span>Confirm Link as Related Cross-Bureau Case</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. INSTITUTION DETAILS MODAL -->
+  <div id="instModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 sticky top-0 z-10">
+        <div>
+          <h3 id="instModalName" class="text-base font-bold text-navy-800">Institution Details</h3>
+          <span id="instModalId" class="text-xs font-mono font-bold text-slate-500">--</span>
+        </div>
+        <button onclick="closeInstModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="p-6 space-y-6">
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
+          <div><span class="text-slate-500 block">AICTE Region:</span><strong id="instModalRegion">--</strong></div>
+          <div><span class="text-slate-500 block">State:</span><strong id="instModalState">--</strong></div>
+          <div><span class="text-slate-500 block">District:</span><strong id="instModalDistrict">--</strong></div>
+          <div><span class="text-slate-500 block">Type:</span><strong id="instModalType">--</strong></div>
+          <div><span class="text-slate-500 block">Risk Rating:</span><strong id="instModalRisk">--</strong></div>
+        </div>
+        <div class="text-xs text-slate-600" id="instModalAddressBox">
+          Campus Address: <span id="instModalAddress" class="font-medium">--</span>
+        </div>
+
+        <div>
+          <h4 class="text-xs font-bold text-slate-600 uppercase tracking-wide mb-3">Consolidated Complaint History Across AICTE Cells</h4>
+          <div id="instModalHistoryList" class="space-y-3">
+            <!-- Dynamically populated complaints -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. DEMO ROLE SWITCHER / AUTHENTICATION MODAL -->
+  <div id="roleModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full max-h-[92vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-navy-800 text-white rounded-t-2xl">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="shield" class="w-5 h-5 text-amber-400"></i>
+          <div>
+            <h3 class="text-base font-bold text-white">AICTE Identity & Access Control</h3>
+            <p class="text-[11px] text-slate-300">Genuine Server-Side Authentication & Role-Based Permissions</p>
+          </div>
+        </div>
+        <button onclick="closeRoleSwitcherModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="p-6 space-y-5">
+        <div>
+          <span class="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-2">Instant Demo Role Switcher (1-Click Login)</span>
+          <p class="text-xs text-slate-500 mb-3">Authenticates genuine server sessions with salted PBKDF2/scrypt hashes and scoped route authorizations.</p>
+          <div class="space-y-2.5">
+            <!-- Admin -->
+            <button onclick="loginAsPreset('admin@aicte.gov.in', 'aicte@admin2026')" class="w-full text-left p-3 rounded-xl border border-blue-200 hover:border-blue-500 hover:bg-blue-50/50 transition flex items-center justify-between group">
+              <div>
+                <div class="text-xs font-bold text-navy-800 flex items-center space-x-1.5">
+                  <span>Dr. Ramesh Sharma</span>
+                  <span class="text-[10px] bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded">CENTRAL ADMIN</span>
+                </div>
+                <div class="text-[11px] text-slate-500">Cross-Bureau Oversight, Transfers, Escalations, Overlaps, Reports</div>
+              </div>
+              <i data-lucide="arrow-right" class="w-4 h-4 text-blue-500 opacity-0 group-hover:opacity-100 transition"></i>
+            </button>
+
+            <!-- Approval Bureau Officer -->
+            <button onclick="loginAsPreset('officer.approval@aicte.gov.in', 'approval@2026')" class="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-blue-500 hover:bg-blue-50/50 transition flex items-center justify-between group">
+              <div>
+                <div class="text-xs font-bold text-navy-800 flex items-center space-x-1.5">
+                  <span>Prof. Meenakshi Sundaram</span>
+                  <span class="text-[10px] bg-purple-100 text-purple-800 font-bold px-1.5 py-0.5 rounded">APPROVAL BUREAU</span>
+                </div>
+                <div class="text-[11px] text-slate-500">Restricted to Approval Bureau cases; cross-bureau actions restricted</div>
+              </div>
+              <i data-lucide="arrow-right" class="w-4 h-4 text-blue-500 opacity-0 group-hover:opacity-100 transition"></i>
+            </button>
+
+            <!-- SGRC Officer -->
+            <button onclick="loginAsPreset('officer.sgrc@aicte.gov.in', 'sgrc@2026')" class="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-blue-500 hover:bg-blue-50/50 transition flex items-center justify-between group">
+              <div>
+                <div class="text-xs font-bold text-navy-800 flex items-center space-x-1.5">
+                  <span>Er. Amitav Sen</span>
+                  <span class="text-[10px] bg-indigo-100 text-indigo-800 font-bold px-1.5 py-0.5 rounded">SGRC DESK OFFICER</span>
+                </div>
+                <div class="text-[11px] text-slate-500">Restricted to Student Grievance Redressal Cell cases</div>
+              </div>
+              <i data-lucide="arrow-right" class="w-4 h-4 text-blue-500 opacity-0 group-hover:opacity-100 transition"></i>
+            </button>
+
+            <!-- Vigilance Officer -->
+            <button onclick="loginAsPreset('officer.vigilance@aicte.gov.in', 'vigilance@2026')" class="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-blue-500 hover:bg-blue-50/50 transition flex items-center justify-between group">
+              <div>
+                <div class="text-xs font-bold text-navy-800 flex items-center space-x-1.5">
+                  <span>Shri R. K. Verma</span>
+                  <span class="text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5 rounded">VIGILANCE CELL</span>
+                </div>
+                <div class="text-[11px] text-slate-500">Restricted to Vigilance Cell investigation cases</div>
+              </div>
+              <i data-lucide="arrow-right" class="w-4 h-4 text-blue-500 opacity-0 group-hover:opacity-100 transition"></i>
+            </button>
+
+            <!-- Student -->
+            <button onclick="loginAsPreset('student.rahul@gmail.com', 'student@2026')" class="w-full text-left p-3 rounded-xl border border-emerald-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition flex items-center justify-between group">
+              <div>
+                <div class="text-xs font-bold text-navy-800 flex items-center space-x-1.5">
+                  <span>Rahul Verma</span>
+                  <span class="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded">STUDENT COMPLAINANT</span>
+                </div>
+                <div class="text-[11px] text-slate-500">Complainant portal view; restricted to personal complaint tracking only</div>
+              </div>
+              <i data-lucide="arrow-right" class="w-4 h-4 text-emerald-500 opacity-0 group-hover:opacity-100 transition"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Custom Credentials Login Form -->
+        <div class="pt-4 border-t border-slate-200">
+          <span class="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-2">Or Login with Credentials</span>
+          <form id="customLoginForm" onsubmit="submitCustomLogin(event)" class="space-y-3">
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-600 mb-1">Email / Username</label>
+              <input type="text" id="loginUsername" required placeholder="username@aicte.gov.in" class="w-full text-xs border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-600 mb-1">Password</label>
+              <input type="password" id="loginPassword" required placeholder="••••••••" class="w-full text-xs border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500">
+            </div>
+            <button type="submit" class="w-full py-2 bg-navy-800 hover:bg-navy-900 text-white text-xs font-semibold rounded-lg shadow-sm transition">
+              Authenticate Session
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. NOTIFICATION AUDIT LOGS MODAL -->
+  <div id="notificationModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 sticky top-0 z-10">
+        <div>
+          <h3 class="text-base font-bold text-navy-800">SLA & Escalation Notification Audit Trail</h3>
+          <p class="text-xs text-slate-500">Tracks SLA alerts, escalation notices, and duplicate suppression</p>
+        </div>
+        <button onclick="closeNotificationLogsModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="p-6 space-y-4">
+        <div class="flex items-center justify-between bg-blue-50 p-3 rounded-xl border border-blue-200">
+          <div>
+            <div class="text-xs font-bold text-blue-900">Run SLA & Overdue Evaluation Scanner</div>
+            <div class="text-[11px] text-blue-700">Evaluates active cases against target deadlines and logs alerts</div>
+          </div>
+          <button onclick="triggerSlaCheck()" class="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white text-xs font-medium rounded-lg shadow-sm transition flex items-center space-x-1">
+            <i data-lucide="play" class="w-3.5 h-3.5"></i>
+            <span>Scan Now</span>
+          </button>
+        </div>
+
+        <div>
+          <span class="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-2">Recent Notification Records</span>
+          <div id="notificationLogsContainer" class="space-y-2 max-h-80 overflow-y-auto">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast" class="fixed bottom-5 right-5 z-50 bg-navy-800 text-white text-xs sm:text-sm px-4 py-3 rounded-xl shadow-lg border border-slate-700 flex items-center space-x-2 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
+    <i data-lucide="info" id="toastIcon" class="w-4 h-4 text-amber-400 shrink-0"></i>
+    <span id="toastMessage">Action completed</span>
+  </div>
+
+  <!-- Footer -->
+  <footer class="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500 no-print">
+    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <div>
+        Smart Institution Grievance Intelligence System (SIGIS) • SIH 2026 Problem Statement SIH26264
+      </div>
+      <div>
+        Persistent SQLite Database Active • Built with Node.js & Tailored NLP Overlap Intelligence
+      </div>
+    </div>
+  </footer>
+
+  <!-- Frontend Logic -->
+  <script src="/app.js"></script>
+</body>
+</html>
