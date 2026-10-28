@@ -112,9 +112,27 @@ function getDocumentRecord(docId) {
 }
 
 function getDocumentFilePath(storedFilename) {
+  // Only accept a plain filename (no separators, no traversal sequences).
+  // This blocks '../', absolute paths, and Windows/POSIX separators outright.
+  if (typeof storedFilename !== 'string' || storedFilename.length === 0) {
+    return null;
+  }
+  if (storedFilename.includes('/') || storedFilename.includes('\\') || storedFilename.includes('..')) {
+    return null;
+  }
+
+  const uploadsRoot = path.resolve(UPLOADS_DIR);
   const resolved = path.resolve(UPLOADS_DIR, storedFilename);
-  // Ensure path is inside UPLOADS_DIR (prevent path traversal)
-  if (!resolved.startsWith(UPLOADS_DIR)) {
+
+  // Containment: the resolved path must sit strictly inside the uploads root.
+  // Appending path.sep prevents sibling-prefix bypasses such as
+  // 'uploads/documents2' matching a startsWith('uploads/documents') check.
+  // Comparison is case-insensitive on Windows to avoid case-based bypasses.
+  const rootWithSep = uploadsRoot.endsWith(path.sep) ? uploadsRoot : uploadsRoot + path.sep;
+  const compareRoot = process.platform === 'win32' ? rootWithSep.toLowerCase() : rootWithSep;
+  const compareResolved = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+
+  if (!compareResolved.startsWith(compareRoot)) {
     return null;
   }
   return resolved;

@@ -2,6 +2,40 @@
 
 let currentStats = null;
 let currentComplaints = [];
+
+// Client-side incremental rendering of the complaint registry: the first
+// COMPLAINTS_PAGE_SIZE rows render immediately and the rest load on demand
+// ("Load More") so huge result sets never freeze the table. The full filtered
+// array is still held in currentComplaints for the radar/filters.
+const COMPLAINTS_PAGE_SIZE = 50;
+let complaintsDisplayLimit = COMPLAINTS_PAGE_SIZE;
+
+// -------------------------------------------------------------
+// SESSION-EXPIRY / AUTH-FAILURE FEEDBACK (non-invasive observer).
+// Wraps window.fetch once to OBSERVE (never modify) API responses: when any
+// /api/ call returns 401 mid-session, the user gets a clear "session
+// expired" message and the app silently restores a valid session instead
+// of failing silently. Auth endpoints are excluded so page-load probes
+// (/api/auth/me, /api/auth/login) behave exactly as before.
+// -------------------------------------------------------------
+(function installAuthExpiryWatcher() {
+  const originalFetch = window.fetch.bind(window);
+  let expiryNoticeShown = false;
+  window.fetch = async function (...args) {
+    const res = await originalFetch(...args);
+    try {
+      const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+      if (res.status === 401 && url.startsWith('/api/') && !url.startsWith('/api/auth/') && !expiryNoticeShown) {
+        expiryNoticeShown = true;
+        showToast('Your session has expired. Restoring access — please retry your action.', 'error');
+        // Restore a valid session (auto-admin fallback preserves the demo flow)
+        await initAuth().catch(() => {});
+        setTimeout(() => { expiryNoticeShown = false; }, 4000);
+      }
+    } catch (err) { /* observer must never break the original request */ }
+    return res;
+  };
+})();
 let currentInstitutions = [];
 let currentOverlaps = [];
 let currentReports = null;
@@ -71,21 +105,49 @@ function debounce(func, wait) {
   };
 }
 
+// Utility: HTML-escape untrusted values before interpolation into innerHTML.
+// Escapes & < > " ' so values are safe in both text nodes and quoted attributes.
+function escapeHtml(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // -------------------------------------------------------------
 // DATA LOADING
 // -------------------------------------------------------------
 async function loadAllData() {
   try {
-    await Promise.all([
-      fetchStats(),
-      fetchComplaints(),
-      fetchInstitutions(),
-      fetchOverlaps(),
-      fetchReports()
-    ]);
+    const isStudent = currentUser && currentUser.role === 'GUEST_STUDENT';
+    const fetchPromises = [
+      fetchStats().catch(err => console.warn('fetchStats error:', err.message)),
+      fetchComplaints().catch(err => console.warn('fetchComplaints error:', err.message)),
+      fetchInstitutions().catch(err => console.warn('fetchInstitutions error:', err.message))
+    ];
+
+    if (!isStudent) {
+      fetchPromises.push(fetchOverlaps().catch(err => console.warn('fetchOverlaps error:', err.message)));
+      fetchPromises.push(fetchReports().catch(err => console.warn('fetchReports error:', err.message)));
+      fetchPromises.push(fetchWorkload().catch(err => console.warn('fetchWorkload error:', err.message)));
+    } else {
+      // Clear staff-only caches for student view
+      currentOverlaps = [];
+      const kpiOverlaps = document.getElementById('kpiOverlaps');
+      if (kpiOverlaps) kpiOverlaps.textContent = 'N/A';
+      const kpiOverlapsSubtitle = document.getElementById('kpiOverlapsSubtitle');
+      if (kpiOverlapsSubtitle) kpiOverlapsSubtitle.textContent = 'Staff Oversight Only';
+      // Workload monitor is a staff-only module: fully hidden for students
+      const workloadWidget = document.getElementById('workloadWidget');
+      if (workloadWidget) workloadWidget.classList.add('hidden');
+    }
+
+    await Promise.all(fetchPromises);
   } catch (err) {
-    console.error('Error during initial data fetch:', err);
-    showToast('Failed to load portal data. Check server connection.', 'error');
+    console.error('Error during data fetch:', err);
   }
 }
 
@@ -103,6 +165,7 @@ async function fetchComplaints() {
   const res = await fetch('/api/complaints');
   if (!res.ok) throw new Error('Complaints fetch failed');
   currentComplaints = await res.json();
+  complaintsDisplayLimit = COMPLAINTS_PAGE_SIZE; // fresh result set: reset window
   renderComplaintsTable(currentComplaints);
   renderDeadlineRadar(currentComplaints);
 }
@@ -139,6 +202,47 @@ async function fetchReports() {
     renderReportsScorecards(currentReports);
   } catch (err) {
     console.error('Error fetching reports:', err);
+  }
+}
+
+// Officer Workload Monitor (staff only; backend already scopes bureaus for
+// Bureau Officers and blocks students with 403 — this widget just renders it)
+async function fetchWorkload() {
+  const widget = document.getElementById('workloadWidget');
+  const tbody = document.getElementById('workloadTableBody');
+  if (!widget || !tbody) return;
+  if (!currentUser || currentUser.role === 'GUEST_STUDENT') {
+    widget.classList.add('hidden');
+    return;
+  }
+  try {
+    const res = await fetch('/api/officers/workload');
+    if (!res.ok) throw new Error('Workload fetch failed');
+    const data = await res.json();
+    const officers = data.officers || [];
+    if (officers.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-slate-400 text-xs">No officer workload data available for your scope.</td></tr>`;
+    } else {
+      tbody.innerHTML = officers.map(o => {
+        // Simple load-band tint: green = light load, amber = moderate, red = heavy
+        let loadClass = 'bg-emerald-100 text-emerald-800';
+        if (o.active_cases >= 5) loadClass = 'bg-red-100 text-red-800 font-bold';
+        else if (o.active_cases >= 3) loadClass = 'bg-amber-100 text-amber-900 font-semibold';
+        return `
+          <tr class="hover:bg-slate-50 transition">
+            <td class="py-2.5 px-4 font-medium text-slate-800">${escapeHtml(o.full_name)}</td>
+            <td class="py-2.5 px-4 text-xs text-slate-600">${escapeHtml(o.bureau || 'Central Admin')}</td>
+            <td class="py-2.5 px-4"><span class="px-2 py-0.5 rounded text-xs ${loadClass}">${o.active_cases}</span></td>
+            <td class="py-2.5 px-4 text-xs ${o.overdue_cases > 0 ? 'text-red-600 font-bold' : 'text-slate-500'}">${o.overdue_cases}</td>
+            <td class="py-2.5 px-4 text-xs ${o.critical_active > 0 ? 'text-red-600 font-bold' : 'text-slate-500'}">${o.critical_active}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+    widget.classList.remove('hidden');
+    lucide.createIcons();
+  } catch (err) {
+    widget.classList.add('hidden');
   }
 }
 
@@ -213,7 +317,7 @@ function navigateToComplaints(filterType) {
   } else if (filterType === 'Resolved') {
     if (statusSelect) statusSelect.value = 'Resolved';
     if (overdueCheckbox) overdueCheckbox.checked = false;
-  } else if (['Submitted', 'UNDER_PROCESS', 'TRANSFERRED', 'ESCALATED'].includes(filterType)) {
+  } else if (['Submitted', 'UNDER_PROCESS', 'TRANSFERRED', 'ESCALATED', 'PENDING_REVIEW'].includes(filterType)) {
     if (statusSelect) statusSelect.value = filterType;
     if (overdueCheckbox) overdueCheckbox.checked = false;
   }
@@ -258,11 +362,24 @@ function renderKPIs(data) {
   const kpiUnderProcess = document.getElementById('kpiUnderProcess');
   if (kpiUnderProcess) kpiUnderProcess.textContent = summary.underProcess ?? 0;
 
+  const kpiPendingAdminReview = document.getElementById('kpiPendingAdminReview');
+  if (kpiPendingAdminReview) kpiPendingAdminReview.textContent = summary.pendingAdminReview ?? 0;
+
   const kpiTransferred = document.getElementById('kpiTransferred');
   if (kpiTransferred) kpiTransferred.textContent = summary.transferred ?? 0;
 
   const kpiEscalated = document.getElementById('kpiEscalated');
   if (kpiEscalated) kpiEscalated.textContent = summary.escalated ?? 0;
+
+  const kpiOverlaps = document.getElementById('kpiOverlaps');
+  const kpiOverlapsSubtitle = document.getElementById('kpiOverlapsSubtitle');
+  if (currentUser && currentUser.role === 'GUEST_STUDENT') {
+    if (kpiOverlaps) kpiOverlaps.textContent = 'N/A';
+    if (kpiOverlapsSubtitle) kpiOverlapsSubtitle.textContent = 'Staff Oversight Only';
+  } else if (kpiOverlaps) {
+    kpiOverlaps.textContent = summary.pendingOverlapReviews ?? 0;
+    if (kpiOverlapsSubtitle) kpiOverlapsSubtitle.textContent = 'Coordination required';
+  }
 
   const overdueCard = document.getElementById('overdueCard');
   if (overdueCard) {
@@ -382,19 +499,19 @@ function renderDashboardOverdue(overdueList) {
     <div class="p-3 bg-red-50/50 rounded-lg border border-red-200 flex items-center justify-between">
       <div class="flex-1 pr-3">
         <div class="flex items-center space-x-2">
-          <span class="font-mono font-bold text-xs text-red-700">${c.id}</span>
-          <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-red-100 text-red-800">${c.priority}</span>
-          <span class="text-xs font-semibold text-slate-800">${c.institution_name}</span>
+          <span class="font-mono font-bold text-xs text-red-700">${escapeHtml(c.id)}</span>
+          <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-red-100 text-red-800">${escapeHtml(c.priority)}</span>
+          <span class="text-xs font-semibold text-slate-800">${escapeHtml(c.institution_name)}</span>
         </div>
-        <p class="text-xs text-slate-600 mt-0.5 truncate">${c.subject}</p>
-        <div class="text-[11px] text-slate-400 mt-1">Responsible: <span class="font-medium text-slate-600">${c.bureau}</span></div>
+        <p class="text-xs text-slate-600 mt-0.5 truncate">${escapeHtml(c.subject)}</p>
+        <div class="text-[11px] text-slate-400 mt-1">Responsible: <span class="font-medium text-slate-600">${escapeHtml(c.bureau)}</span></div>
       </div>
       <div class="text-right shrink-0">
         <span class="inline-block text-xs font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full">
-          +${c.daysOverdue} days overdue
+          +${escapeHtml(c.daysOverdue)} days overdue
         </span>
         <div class="mt-2">
-          <button onclick="openDrawer('${c.id}')" class="text-xs text-blue-600 hover:text-blue-800 font-semibold underline">
+          <button onclick="openDrawer('${escapeHtml(c.id)}')" class="text-xs text-blue-600 hover:text-blue-800 font-semibold underline">
             Review Case
           </button>
         </div>
@@ -418,11 +535,11 @@ function renderDashboardActivity(activity) {
       <div class="w-2 h-2 rounded-full bg-blue-500 mt-1.5 shrink-0"></div>
       <div class="flex-1">
         <div class="flex items-center justify-between">
-          <span class="font-mono font-bold text-slate-700">${a.complaint_id}</span>
-          <span class="text-[10px] text-slate-400">${a.timestamp.slice(0, 16)}</span>
+          <span class="font-mono font-bold text-slate-700">${escapeHtml(a.complaint_id)}</span>
+          <span class="text-[10px] text-slate-400">${escapeHtml((a.timestamp || '').slice(0, 16))}</span>
         </div>
-        <p class="text-[11px] text-slate-600 mt-0.5">${a.remarks || a.action_type}</p>
-        <span class="text-[10px] text-slate-400 italic">By ${a.actor}</span>
+        <p class="text-[11px] text-slate-600 mt-0.5">${escapeHtml(a.remarks || a.action_type)}</p>
+        <span class="text-[10px] text-slate-400 italic">By ${escapeHtml(a.actor)}</span>
       </div>
     </div>
   `).join('');
@@ -434,7 +551,11 @@ function renderDashboardActivity(activity) {
 function renderComplaintsTable(complaints) {
   const tbody = document.getElementById('complaintsTableBody');
   const countEl = document.getElementById('filteredResultsCount');
-  if (countEl) countEl.textContent = `Showing ${complaints.length} cases`;
+  if (countEl) {
+    countEl.textContent = complaints.length > complaintsDisplayLimit
+      ? `Showing first ${complaintsDisplayLimit} of ${complaints.length} cases`
+      : `Showing ${complaints.length} cases`;
+  }
   if (!tbody) return;
 
   if (complaints.length === 0) {
@@ -450,7 +571,12 @@ function renderComplaintsTable(complaints) {
     return;
   }
 
-  tbody.innerHTML = complaints.map(c => {
+  // Incremental rendering: only the current window of rows is turned into
+  // HTML; a "Load More" control at the bottom extends the window.
+  const visibleRows = complaints.slice(0, complaintsDisplayLimit);
+  const hiddenCount = complaints.length - visibleRows.length;
+
+  tbody.innerHTML = visibleRows.map(c => {
     // Priority badge
     let priorityClass = 'bg-slate-100 text-slate-700';
     if (c.priority === 'CRITICAL') priorityClass = 'bg-red-100 text-red-800 font-bold border border-red-200';
@@ -460,6 +586,7 @@ function renderComplaintsTable(complaints) {
     // Status badge
     let statusClass = 'bg-slate-100 text-slate-800';
     if (c.status === 'Resolved' || c.status === 'Rejected / Closed') statusClass = 'bg-emerald-100 text-emerald-800 font-semibold';
+    else if (c.status === 'Pending Admin Review') statusClass = 'bg-amber-100 text-amber-900 font-bold border border-amber-300';
     else if (c.status === 'Notice Issued to Institute') statusClass = 'bg-amber-100 text-amber-800';
     else if (c.status === 'Under Bureau Scrutiny') statusClass = 'bg-indigo-100 text-indigo-800';
     else if (c.status === 'Hearing / Inquiry Scheduled') statusClass = 'bg-purple-100 text-purple-800 font-semibold';
@@ -467,66 +594,117 @@ function renderComplaintsTable(complaints) {
     else if (c.status === 'Escalated') statusClass = 'bg-rose-100 text-rose-800 font-bold border border-rose-200';
 
     // SLA display
-    let slaBadge = `<span class="text-slate-600">${c.target_date}</span>`;
+    let slaBadge = `<span class="text-slate-600">${escapeHtml(c.target_date)}</span>`;
     if (c.isOverdue) {
-      slaBadge = `<span class="text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded border border-red-200">Overdue (${c.target_date})</span>`;
+      slaBadge = `<span class="text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded border border-red-200">Overdue (${escapeHtml(c.target_date)})</span>`;
     } else if (c.status === 'Resolved' || c.status === 'Rejected / Closed') {
       slaBadge = `<span class="text-emerald-600 font-medium">Closed</span>`;
     }
 
     // Linked case marker
     const linkedMarker = c.linked_group_id ? `
-      <span class="inline-flex items-center text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-bold ml-1" title="Linked Group: ${c.linked_group_id}">
+      <span class="inline-flex items-center text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-bold ml-1" title="Linked Group: ${escapeHtml(c.linked_group_id)}">
         <i data-lucide="link" class="w-2.5 h-2.5 mr-0.5"></i> Linked
       </span>
     ` : '';
 
+    // External source reference (stored separately from the internal case ID)
+    const sourceRefLine = c.source_reference ? `
+      <div class="text-[10px] text-slate-400 font-normal" title="External source reference">src: ${escapeHtml(c.source_reference)}</div>
+    ` : '';
+
+    // Role-specific action buttons
+    let actionButtons = '';
+    if (!currentUser || currentUser.role === 'ADMIN') {
+      if (c.status === 'Pending Admin Review') {
+        actionButtons += `
+          <button onclick="openAdminReviewModal('${escapeHtml(c.id)}')" class="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs font-bold inline-flex items-center space-x-1" title="Review Officer Resolution">
+            <i data-lucide="gavel" class="w-3.5 h-3.5"></i>
+            <span>Review</span>
+          </button>
+        `;
+      }
+      actionButtons += `
+        <button onclick="openEditModal('${escapeHtml(c.id)}')" class="p-1.5 text-slate-600 hover:text-amber-600 hover:bg-slate-100 rounded" title="Update / Reassign">
+          <i data-lucide="edit-3" class="w-4 h-4"></i>
+        </button>
+        <button onclick="confirmDeleteComplaint('${escapeHtml(c.id)}')" class="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-100 rounded" title="Delete Complaint">
+          <i data-lucide="trash-2" class="w-4 h-4"></i>
+        </button>
+      `;
+    } else if (currentUser.role === 'BUREAU_OFFICER') {
+      if (c.status === 'Pending Admin Review') {
+        actionButtons += `<span class="px-2 py-0.5 text-[10px] bg-amber-100 text-amber-900 rounded font-bold border border-amber-300">In Admin Review</span>`;
+      } else if (c.status !== 'Resolved' && c.status !== 'Rejected / Closed') {
+        actionButtons += `
+          <button onclick="openEditModal('${escapeHtml(c.id)}')" class="p-1.5 text-slate-600 hover:text-amber-600 hover:bg-slate-100 rounded" title="Investigate & Update">
+            <i data-lucide="edit-3" class="w-4 h-4"></i>
+          </button>
+        `;
+      }
+    }
+
     return `
       <tr class="hover:bg-slate-50 transition border-b border-slate-100">
         <td class="py-3 px-4 font-mono font-semibold text-blue-600 whitespace-nowrap">
-          <button onclick="openDrawer('${c.id}')" class="hover:underline flex items-center">
-            ${c.id}
+          <button onclick="openDrawer('${escapeHtml(c.id)}')" class="hover:underline flex items-center">
+            ${escapeHtml(c.id)}
           </button>
           ${linkedMarker}
+          ${sourceRefLine}
         </td>
         <td class="py-3 px-4">
-          <div class="font-medium text-slate-800 truncate max-w-xs" title="${c.institution_name}">${c.institution_name}</div>
-          <div class="text-[11px] text-slate-400 font-mono">${c.institution_id} • ${c.institution_region || c.institution_state}</div>
+          <div class="font-medium text-slate-800 truncate max-w-xs" title="${escapeHtml(c.institution_name)}">${escapeHtml(c.institution_name)}</div>
+          <div class="text-[11px] text-slate-400 font-mono">${escapeHtml(c.institution_id)} • ${escapeHtml(c.institution_region || c.institution_state)}</div>
         </td>
         <td class="py-3 px-4 text-xs text-slate-700 whitespace-nowrap">
           <span class="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-800 text-[11px]">
-            ${c.bureau.replace(' (SGRC)', '').replace(' / Regional Office', '')}
+            ${escapeHtml(c.bureau.replace(' (SGRC)', '').replace(' / Regional Office', ''))}
           </span>
         </td>
         <td class="py-3 px-4 max-w-sm">
-          <div class="font-semibold text-slate-800 line-clamp-1" title="${c.subject}">${c.subject}</div>
-          <div class="text-[11px] text-slate-500">By <strong>${c.complainant_name}</strong> (${c.complainant_role})</div>
+          <div class="font-semibold text-slate-800 line-clamp-1" title="${escapeHtml(c.subject)}">${escapeHtml(c.subject)}</div>
+          <div class="text-[11px] text-slate-500">By <strong>${escapeHtml(c.complainant_name)}</strong> (${escapeHtml(c.complainant_role)})</div>
         </td>
         <td class="py-3 px-4 whitespace-nowrap">
-          <span class="text-xs px-2 py-0.5 rounded ${priorityClass}">${c.priority}</span>
+          <span class="text-xs px-2 py-0.5 rounded ${priorityClass}">${escapeHtml(c.priority)}</span>
         </td>
         <td class="py-3 px-4 whitespace-nowrap">
-          <span class="text-xs px-2 py-0.5 rounded ${statusClass}">${c.status}</span>
+          <span class="text-xs px-2 py-0.5 rounded ${statusClass}">${escapeHtml(c.status)}</span>
         </td>
         <td class="py-3 px-4 whitespace-nowrap text-xs">
           ${slaBadge}
         </td>
         <td class="py-3 px-4 text-right whitespace-nowrap space-x-1">
-          <button onclick="openDrawer('${c.id}')" class="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded" title="View Full Dossier">
+          <button onclick="openDrawer('${escapeHtml(c.id)}')" class="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded" title="View Full Dossier">
             <i data-lucide="eye" class="w-4 h-4"></i>
           </button>
-          <button onclick="openEditModal('${c.id}')" class="p-1.5 text-slate-600 hover:text-amber-600 hover:bg-slate-100 rounded" title="Update / Reassign">
-            <i data-lucide="edit-3" class="w-4 h-4"></i>
-          </button>
-          <button onclick="confirmDeleteComplaint('${c.id}')" class="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-100 rounded" title="Delete Complaint">
-            <i data-lucide="trash-2" class="w-4 h-4"></i>
-          </button>
+          ${actionButtons}
         </td>
       </tr>
     `;
-  }).join('');
+  }).join('') + (hiddenCount > 0 ? `
+      <tr>
+        <td colspan="8" class="text-center py-4">
+          <button onclick="loadMoreComplaints()" class="px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold transition inline-flex items-center space-x-1.5">
+            <i data-lucide="chevrons-down" class="w-3.5 h-3.5"></i>
+            <span>Load ${Math.min(hiddenCount, COMPLAINTS_PAGE_SIZE)} more (${hiddenCount} not yet shown)</span>
+          </button>
+        </td>
+      </tr>
+  ` : '');
 
   lucide.createIcons();
+}
+
+/**
+ * Extends the rendered window of the complaint registry by one page and
+ * re-renders, preserving scroll position context (no refetch needed because
+ * the full filtered result set is already in currentComplaints).
+ */
+function loadMoreComplaints() {
+  complaintsDisplayLimit += COMPLAINTS_PAGE_SIZE;
+  renderComplaintsTable(currentComplaints);
 }
 
 async function applyComplaintFilters() {
@@ -539,6 +717,7 @@ async function applyComplaintFilters() {
   const dateFrom = document.getElementById('filterDateFrom')?.value || '';
   const dateTo = document.getElementById('filterDateTo')?.value || '';
   const overdueOnly = document.getElementById('filterOverdueOnly')?.checked || false;
+  const assignedToMe = document.getElementById('filterAssignedToMe')?.checked || false;
 
   const params = new URLSearchParams();
   if (search.trim()) params.append('search', search.trim());
@@ -550,11 +729,13 @@ async function applyComplaintFilters() {
   if (dateFrom) params.append('dateFrom', dateFrom);
   if (dateTo) params.append('dateTo', dateTo);
   if (overdueOnly) params.append('overdueOnly', 'true');
+  if (assignedToMe) params.append('assigned_to_me', 'true');
 
   try {
     const res = await fetch(`/api/complaints?${params.toString()}`);
     if (res.ok) {
       currentComplaints = await res.json();
+      complaintsDisplayLimit = COMPLAINTS_PAGE_SIZE; // new filter set: reset window
       renderComplaintsTable(currentComplaints);
     }
   } catch (err) {
@@ -633,17 +814,17 @@ function renderOverlapCards(overlaps) {
       statusPill = `<span class="bg-slate-100 text-slate-600 text-xs px-2.5 py-1 rounded-full font-semibold border border-slate-200 flex items-center space-x-1"><i data-lucide="shield-x" class="w-3.5 h-3.5"></i><span>Dismissed as Distinct</span></span>`;
     }
 
-    const keywordChips = (item.commonKeywords || []).map(k => `<span class="keyword-chip">${k}</span>`).join(' ');
+    const keywordChips = (item.commonKeywords || []).map(k => `<span class="keyword-chip">${escapeHtml(k)}</span>`).join(' ');
 
     return `
       <div class="bg-white rounded-xl border ${cardBorder} shadow-sm p-5 hover:shadow-md transition">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-2 pb-3 border-b border-slate-100">
           <div class="flex items-center space-x-2">
             <span class="text-xs px-2.5 py-0.5 rounded-full border ${badgeStyle}">
-              ${badgeText} (${item.severity})
+              ${badgeText} (${escapeHtml(item.severity)})
             </span>
             <span class="text-xs text-slate-500 font-medium">
-              Target Institution: <strong class="text-slate-800">${item.complaintA.institution_name || item.complaintA.institution_id}</strong>
+              Target Institution: <strong class="text-slate-800">${escapeHtml(item.complaintA.institution_name || item.complaintA.institution_id)}</strong>
             </span>
           </div>
           <div>${statusPill}</div>
@@ -652,7 +833,7 @@ function renderOverlapCards(overlaps) {
         <!-- Overlap Reasons & Keywords -->
         <div class="py-3">
           <div class="text-xs text-slate-600 font-medium flex flex-wrap gap-2 mb-2">
-            ${(item.reasons || []).map(r => `<span class="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[11px] font-medium">• ${r}</span>`).join('')}
+            ${(item.reasons || []).map(r => `<span class="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[11px] font-medium">• ${escapeHtml(r)}</span>`).join('')}
           </div>
           ${keywordChips ? `<div class="mt-2 flex flex-wrap items-center gap-1.5"><span class="text-[11px] text-slate-400 font-semibold mr-1">Shared Tokens:</span>${keywordChips}</div>` : ''}
         </div>
@@ -662,30 +843,30 @@ function renderOverlapCards(overlaps) {
           <!-- Case A Preview -->
           <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
             <div class="flex items-center justify-between text-xs mb-1">
-              <span class="font-mono font-bold text-blue-600">${item.complaintA.id}</span>
-              <span class="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded font-semibold">${item.complaintA.bureau}</span>
+              <span class="font-mono font-bold text-blue-600">${escapeHtml(item.complaintA.id)}</span>
+              <span class="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded font-semibold">${escapeHtml(item.complaintA.bureau)}</span>
             </div>
-            <h5 class="text-xs font-bold text-slate-800 line-clamp-1">${item.complaintA.subject}</h5>
-            <p class="text-[11px] text-slate-600 mt-1 line-clamp-2">${item.complaintA.description}</p>
-            <div class="text-[10px] text-slate-400 mt-1">Complainant: ${item.complaintA.complainant_name} (${item.complaintA.complainant_role})</div>
+            <h5 class="text-xs font-bold text-slate-800 line-clamp-1">${escapeHtml(item.complaintA.subject)}</h5>
+            <p class="text-[11px] text-slate-600 mt-1 line-clamp-2">${escapeHtml(item.complaintA.description)}</p>
+            <div class="text-[10px] text-slate-400 mt-1">Complainant: ${escapeHtml(item.complaintA.complainant_name)} (${escapeHtml(item.complaintA.complainant_role)})</div>
           </div>
 
           <!-- Case B Preview -->
           <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
             <div class="flex items-center justify-between text-xs mb-1">
-              <span class="font-mono font-bold text-purple-600">${item.complaintB.id}</span>
-              <span class="text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-semibold">${item.complaintB.bureau}</span>
+              <span class="font-mono font-bold text-purple-600">${escapeHtml(item.complaintB.id)}</span>
+              <span class="text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-semibold">${escapeHtml(item.complaintB.bureau)}</span>
             </div>
-            <h5 class="text-xs font-bold text-slate-800 line-clamp-1">${item.complaintB.subject}</h5>
-            <p class="text-[11px] text-slate-600 mt-1 line-clamp-2">${item.complaintB.description}</p>
-            <div class="text-[10px] text-slate-400 mt-1">Complainant: ${item.complaintB.complainant_name} (${item.complaintB.complainant_role})</div>
+            <h5 class="text-xs font-bold text-slate-800 line-clamp-1">${escapeHtml(item.complaintB.subject)}</h5>
+            <p class="text-[11px] text-slate-600 mt-1 line-clamp-2">${escapeHtml(item.complaintB.description)}</p>
+            <div class="text-[10px] text-slate-400 mt-1">Complainant: ${escapeHtml(item.complaintB.complainant_name)} (${escapeHtml(item.complaintB.complainant_role)})</div>
           </div>
         </div>
 
         <!-- Card Footer Actions -->
         <div class="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
           <div class="text-[11px] text-slate-400">
-            ${item.reviewedBy ? `Last evaluated by <strong>${item.reviewedBy}</strong>` : 'Awaiting officer examination'}
+            ${item.reviewedBy ? `Last evaluated by <strong>${escapeHtml(item.reviewedBy)}</strong>` : 'Awaiting officer examination'}
           </div>
           <button onclick="openOverlapReviewModal(${idx})" class="px-4 py-2 text-xs bg-purple-700 hover:bg-purple-800 text-white font-semibold rounded-lg shadow-sm transition flex items-center space-x-1.5">
             <i data-lucide="split" class="w-3.5 h-3.5"></i>
@@ -715,7 +896,7 @@ function openOverlapReviewModal(index) {
   const reasonsList = document.getElementById('reviewReasonsList');
   if (reasonsList) {
     reasonsList.innerHTML = (item.reasons || [])
-      .map(r => `<span class="bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-medium">${r}</span>`)
+      .map(r => `<span class="bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-medium">${escapeHtml(r)}</span>`)
       .join('');
   }
 
@@ -723,7 +904,7 @@ function openOverlapReviewModal(index) {
   const tokensContainer = document.getElementById('reviewTokensContainer');
   if (tokensContainer) {
     tokensContainer.innerHTML = (item.commonKeywords && item.commonKeywords.length > 0)
-      ? item.commonKeywords.map(k => `<span class="keyword-chip">${k}</span>`).join(' ')
+      ? item.commonKeywords.map(k => `<span class="keyword-chip">${escapeHtml(k)}</span>`).join(' ')
       : '<span class="text-xs text-slate-400">None extracted</span>';
   }
 
@@ -817,34 +998,34 @@ function renderInstitutionsGrid(institutions) {
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 hover:shadow-md transition flex flex-col justify-between">
         <div>
           <div class="flex items-start justify-between gap-2 mb-2">
-            <span class="font-mono text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${inst.id}</span>
+            <span class="font-mono text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${escapeHtml(inst.id)}</span>
             <span class="text-xs px-2 py-0.5 rounded-full ${riskBadge}">${riskLabel}</span>
           </div>
-          <h4 class="text-sm font-bold text-slate-800 line-clamp-2">${inst.name}</h4>
+          <h4 class="text-sm font-bold text-slate-800 line-clamp-2">${escapeHtml(inst.name)}</h4>
           <div class="text-xs text-slate-500 mt-1 flex items-center space-x-1">
             <i data-lucide="map-pin" class="w-3.5 h-3.5"></i>
-            <span>${inst.district}, ${inst.state} • <strong class="text-slate-700">${inst.region || 'Region'}</strong></span>
+            <span>${escapeHtml(inst.district)}, ${escapeHtml(inst.state)} • <strong class="text-slate-700">${escapeHtml(inst.region || 'Region')}</strong></span>
           </div>
-          <div class="text-[11px] text-slate-400 mt-0.5">${inst.type}</div>
+          <div class="text-[11px] text-slate-400 mt-0.5">${escapeHtml(inst.type)}</div>
         </div>
 
         <div class="mt-4 pt-3 border-t border-slate-100">
           <div class="grid grid-cols-3 gap-2 text-center text-xs mb-3">
             <div class="bg-slate-50 p-1.5 rounded">
               <span class="block text-slate-400 text-[10px] uppercase font-bold">Total</span>
-              <strong class="text-slate-700 font-mono">${inst.total_cases || 0}</strong>
+              <strong class="text-slate-700 font-mono">${escapeHtml(inst.total_cases || 0)}</strong>
             </div>
             <div class="bg-amber-50 p-1.5 rounded">
               <span class="block text-amber-600 text-[10px] uppercase font-bold">Active</span>
-              <strong class="text-amber-700 font-mono">${inst.active_cases || 0}</strong>
+              <strong class="text-amber-700 font-mono">${escapeHtml(inst.active_cases || 0)}</strong>
             </div>
             <div class="bg-emerald-50 p-1.5 rounded">
               <span class="block text-emerald-600 text-[10px] uppercase font-bold">Closed</span>
-              <strong class="text-emerald-700 font-mono">${inst.resolved_cases || 0}</strong>
+              <strong class="text-emerald-700 font-mono">${escapeHtml(inst.resolved_cases || 0)}</strong>
             </div>
           </div>
 
-          <button onclick="openInstitutionModal('${inst.id}')" class="w-full py-2 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-lg transition flex items-center justify-center space-x-1">
+          <button onclick="openInstitutionModal('${escapeHtml(inst.id)}')" class="w-full py-2 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-lg transition flex items-center justify-center space-x-1">
             <i data-lucide="history" class="w-3.5 h-3.5"></i>
             <span>Consolidated Grievance History</span>
           </button>
@@ -910,14 +1091,14 @@ async function openInstitutionModal(id) {
         <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 flex items-center justify-between">
           <div>
             <div class="flex items-center space-x-2">
-              <span class="font-mono font-bold text-xs text-blue-600">${c.id}</span>
-              <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-200 text-slate-700">${c.bureau}</span>
-              <span class="text-[10px] px-1.5 py-0.2 rounded bg-blue-100 text-blue-800">${c.status}</span>
+              <span class="font-mono font-bold text-xs text-blue-600">${escapeHtml(c.id)}</span>
+              <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-200 text-slate-700">${escapeHtml(c.bureau)}</span>
+              <span class="text-[10px] px-1.5 py-0.2 rounded bg-blue-100 text-blue-800">${escapeHtml(c.status)}</span>
             </div>
-            <h5 class="text-xs font-semibold text-slate-800 mt-1">${c.subject}</h5>
-            <div class="text-[10px] text-slate-400 mt-0.5">Filed by ${c.complainant_name} (${c.complainant_role}) on ${c.created_at.slice(0, 10)}</div>
+            <h5 class="text-xs font-semibold text-slate-800 mt-1">${escapeHtml(c.subject)}</h5>
+            <div class="text-[10px] text-slate-400 mt-0.5">Filed by ${escapeHtml(c.complainant_name)} (${escapeHtml(c.complainant_role)}) on ${escapeHtml((c.created_at || '').slice(0, 10))}</div>
           </div>
-          <button onclick="closeInstModal(); openDrawer('${c.id}');" class="text-xs text-blue-600 hover:underline font-semibold shrink-0 ml-3">
+          <button onclick="closeInstModal(); openDrawer('${escapeHtml(c.id)}');" class="text-xs text-blue-600 hover:underline font-semibold shrink-0 ml-3">
             Open File →
           </button>
         </div>
@@ -955,14 +1136,14 @@ function renderDeadlineRadar(complaints) {
     } else {
       overdueTbody.innerHTML = overdue.map(c => `
         <tr class="hover:bg-red-50/40 border-b border-slate-100">
-          <td class="py-2.5 px-4 font-mono font-bold text-red-700">${c.id}</td>
-          <td class="py-2.5 px-4 text-xs font-semibold text-slate-800">${c.institution_name} <span class="text-slate-400">(${c.institution_region || c.institution_state})</span></td>
-          <td class="py-2.5 px-4 text-xs text-slate-600">${c.bureau}</td>
-          <td class="py-2.5 px-4 text-xs text-slate-500">${c.target_date}</td>
-          <td class="py-2.5 px-4 text-xs font-bold text-red-600">+${Math.abs(c.daysToDeadline)} days</td>
-          <td class="py-2.5 px-4 text-xs font-medium text-slate-700">${c.status}</td>
+          <td class="py-2.5 px-4 font-mono font-bold text-red-700">${escapeHtml(c.id)}</td>
+          <td class="py-2.5 px-4 text-xs font-semibold text-slate-800">${escapeHtml(c.institution_name)} <span class="text-slate-400">(${escapeHtml(c.institution_region || c.institution_state)})</span></td>
+          <td class="py-2.5 px-4 text-xs text-slate-600">${escapeHtml(c.bureau)}</td>
+          <td class="py-2.5 px-4 text-xs text-slate-500">${escapeHtml(c.target_date)}</td>
+          <td class="py-2.5 px-4 text-xs font-bold text-red-600">+${escapeHtml(Math.abs(c.daysToDeadline))} days</td>
+          <td class="py-2.5 px-4 text-xs font-medium text-slate-700">${escapeHtml(c.status)}</td>
           <td class="py-2.5 px-4 text-right">
-            <button onclick="openEditModal('${c.id}')" class="text-xs bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded font-semibold transition">
+            <button onclick="openEditModal('${escapeHtml(c.id)}')" class="text-xs bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded font-semibold transition">
               Escalate / Update
             </button>
           </td>
@@ -977,16 +1158,16 @@ function renderDeadlineRadar(complaints) {
     } else {
       upcomingTbody.innerHTML = upcoming.map(c => `
         <tr class="hover:bg-slate-50 border-b border-slate-100">
-          <td class="py-2.5 px-4 font-mono font-semibold text-blue-600">${c.id}</td>
-          <td class="py-2.5 px-4 text-xs font-semibold text-slate-800">${c.institution_name} <span class="text-slate-400">(${c.institution_region || c.institution_state})</span></td>
-          <td class="py-2.5 px-4 text-xs text-slate-600">${c.bureau}</td>
-          <td class="py-2.5 px-4 text-xs text-slate-500">${c.target_date}</td>
+          <td class="py-2.5 px-4 font-mono font-semibold text-blue-600">${escapeHtml(c.id)}</td>
+          <td class="py-2.5 px-4 text-xs font-semibold text-slate-800">${escapeHtml(c.institution_name)} <span class="text-slate-400">(${escapeHtml(c.institution_region || c.institution_state)})</span></td>
+          <td class="py-2.5 px-4 text-xs text-slate-600">${escapeHtml(c.bureau)}</td>
+          <td class="py-2.5 px-4 text-xs text-slate-500">${escapeHtml(c.target_date)}</td>
           <td class="py-2.5 px-4 text-xs font-bold ${c.daysToDeadline <= 5 ? 'text-amber-600' : 'text-slate-700'}">
-            ${c.daysToDeadline} days
+            ${escapeHtml(c.daysToDeadline)} days
           </td>
-          <td class="py-2.5 px-4 text-xs">${c.priority}</td>
+          <td class="py-2.5 px-4 text-xs">${escapeHtml(c.priority)}</td>
           <td class="py-2.5 px-4 text-right">
-            <button onclick="openDrawer('${c.id}')" class="text-xs text-blue-600 hover:underline font-semibold">
+            <button onclick="openDrawer('${escapeHtml(c.id)}')" class="text-xs text-blue-600 hover:underline font-semibold">
               Details →
             </button>
           </td>
@@ -1009,7 +1190,7 @@ function renderReportsScorecards(reports) {
   if (bureauBody && reports.bureauScorecard) {
     bureauBody.innerHTML = reports.bureauScorecard.map(b => `
       <tr class="hover:bg-slate-50 border-b border-slate-100">
-        <td class="py-3 px-4 font-semibold text-slate-800">${b.bureau}</td>
+        <td class="py-3 px-4 font-semibold text-slate-800">${escapeHtml(b.bureau)}</td>
         <td class="py-3 px-4 text-center font-mono font-bold">${b.total}</td>
         <td class="py-3 px-4 text-center font-mono text-emerald-600 font-bold">${b.resolved}</td>
         <td class="py-3 px-4 text-center font-mono text-amber-600">${b.active}</td>
@@ -1031,7 +1212,7 @@ function renderReportsScorecards(reports) {
   if (regionBody && reports.regionWise) {
     regionBody.innerHTML = reports.regionWise.map(r => `
       <tr class="hover:bg-slate-50 border-b border-slate-100">
-        <td class="py-2.5 px-3 font-semibold text-slate-800">${r.region}</td>
+        <td class="py-2.5 px-3 font-semibold text-slate-800">${escapeHtml(r.region)}</td>
         <td class="py-2.5 px-3 text-center font-mono font-bold">${r.total}</td>
         <td class="py-2.5 px-3 text-center font-mono text-amber-600">${r.active}</td>
         <td class="py-2.5 px-3 text-center font-mono text-emerald-600 font-bold">${r.resolved}</td>
@@ -1085,6 +1266,31 @@ async function openDrawer(complaintId) {
     document.getElementById('drawerCaseId').textContent = data.id;
     document.getElementById('drawerPriorityBadge').textContent = data.priority;
     document.getElementById('drawerSubject').textContent = data.subject;
+
+    // External source reference (shown only when present)
+    const drawerSourceRefWrap = document.getElementById('drawerSourceRefWrap');
+    if (drawerSourceRefWrap) {
+      if (data.source_reference) {
+        document.getElementById('drawerSourceRef').textContent = data.source_reference;
+        drawerSourceRefWrap.classList.remove('hidden');
+      } else {
+        drawerSourceRefWrap.classList.add('hidden');
+      }
+    }
+
+    // Cross-bureau coordination (staff only)
+    const coordWrap = document.getElementById('drawerCoordinationWrap');
+    const coordBtn = document.getElementById('drawerCoordBtn');
+    if (coordWrap) {
+      if (isStaffUser()) {
+        coordWrap.classList.remove('hidden');
+        if (coordBtn) coordBtn.classList.remove('hidden');
+        renderDrawerCoordination(data.id);
+      } else {
+        coordWrap.classList.add('hidden');
+        if (coordBtn) coordBtn.classList.add('hidden');
+      }
+    }
     document.getElementById('drawerStatusBadge').textContent = data.status;
     document.getElementById('drawerBureau').textContent = data.bureau;
     document.getElementById('drawerDeadline').textContent = data.isOverdue
@@ -1126,15 +1332,6 @@ async function openDrawer(complaintId) {
     // Description
     document.getElementById('drawerDescription').textContent = data.description;
 
-    // Resolution Remarks
-    const resBox = document.getElementById('drawerResolutionBox');
-    if (data.resolution_remarks) {
-      document.getElementById('drawerResolutionText').textContent = data.resolution_remarks;
-      resBox.classList.remove('hidden');
-    } else {
-      resBox.classList.add('hidden');
-    }
-
     // Linked Banner
     const linkedBanner = document.getElementById('drawerLinkedBanner');
     if (data.linked_group_id) {
@@ -1151,16 +1348,52 @@ async function openDrawer(complaintId) {
       overlapList.innerHTML = data.potentialOverlaps.map(o => `
         <div class="text-xs bg-white/70 p-2 rounded border border-purple-200 flex items-center justify-between">
           <div>
-            <span class="font-mono font-bold text-purple-900">${o.complaint.id}</span>
-            <span class="text-slate-600"> (${o.complaint.bureau})</span>
-            <p class="text-[11px] text-slate-500 truncate">${o.complaint.subject}</p>
+            <span class="font-mono font-bold text-purple-900">${escapeHtml(o.complaint.id)}</span>
+            <span class="text-slate-600"> (${escapeHtml(o.complaint.bureau)})</span>
+            <p class="text-[11px] text-slate-500 truncate">${escapeHtml(o.complaint.subject)}</p>
           </div>
-          <span class="font-bold text-purple-700 ml-2">${o.similarity}% match</span>
+          <span class="font-bold text-purple-700 ml-2">${escapeHtml(o.similarity)}% match</span>
         </div>
       `).join('');
       overlapAlert.classList.remove('hidden');
     } else {
       overlapAlert.classList.add('hidden');
+    }
+
+    // Admin Review Prompt Banner
+    const adminReviewBanner = document.getElementById('drawerAdminReviewBanner');
+    if (adminReviewBanner) {
+      if (data.status === 'Pending Admin Review' && currentUser && currentUser.role === 'ADMIN') {
+        adminReviewBanner.classList.remove('hidden');
+      } else {
+        adminReviewBanner.classList.add('hidden');
+      }
+    }
+
+    // Officer Submit Banner
+    const officerSubmitBanner = document.getElementById('drawerOfficerSubmitBanner');
+    if (officerSubmitBanner) {
+      const isOfficer = currentUser && currentUser.role === 'BUREAU_OFFICER';
+      const isOpen = data.status !== 'Resolved' && data.status !== 'Rejected / Closed' && data.status !== 'Pending Admin Review';
+      if (isOfficer && isOpen) {
+        officerSubmitBanner.classList.remove('hidden');
+      } else {
+        officerSubmitBanner.classList.add('hidden');
+      }
+    }
+
+    // Official Resolution Report Box
+    const resBox = document.getElementById('drawerResolutionBox');
+    const resText = document.getElementById('drawerResolutionText');
+    const resDate = document.getElementById('drawerResolvedDate');
+    if (resBox) {
+      if (data.status === 'Resolved' && (data.final_resolution_report || data.resolution_remarks)) {
+        resBox.classList.remove('hidden');
+        if (resText) resText.textContent = data.final_resolution_report || data.resolution_remarks;
+        if (resDate) resDate.textContent = data.resolved_at ? `Resolved on: ${data.resolved_at.slice(0, 10)}` : 'Formally Closed';
+      } else {
+        resBox.classList.add('hidden');
+      }
     }
 
     // History Timeline
@@ -1170,11 +1403,11 @@ async function openDrawer(complaintId) {
         <div class="relative pb-2">
           <div class="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-blue-600 ring-4 ring-white"></div>
           <div class="flex items-center justify-between text-[11px]">
-            <strong class="text-slate-800 uppercase">${h.action_type}</strong>
-            <span class="text-slate-400">${h.timestamp}</span>
+            <strong class="text-slate-800 uppercase">${escapeHtml(h.action_type)}</strong>
+            <span class="text-slate-400">${escapeHtml(h.timestamp)}</span>
           </div>
-          <p class="text-slate-700 mt-0.5">${h.remarks || ''}</p>
-          <div class="text-[10px] text-slate-400 mt-0.5">Authorized by: ${h.actor}</div>
+          <p class="text-slate-700 mt-0.5">${escapeHtml(h.remarks || '')}</p>
+          <div class="text-[10px] text-slate-400 mt-0.5">Authorized by: ${escapeHtml(h.actor)}</div>
         </div>
       `).join('');
     } else {
@@ -1318,30 +1551,118 @@ async function submitAddComplaint(e) {
 }
 
 // -------------------------------------------------------------
-// EDIT / REASSIGN COMPLAINT
+// EDIT / REASSIGN COMPLAINT & RESOLUTION WORKFLOW
 // -------------------------------------------------------------
+async function populateOfficersDropdown(bureau, selectId, selectedId) {
+  try {
+    const res = await fetch(`/api/officers?bureau=${encodeURIComponent(bureau || 'ALL')}`);
+    if (!res.ok) return;
+    const officers = await res.json();
+    const select = document.getElementById(selectId);
+    if (!select) return;
+
+    select.innerHTML = '<option value="">-- Select Assigned Officer --</option>' +
+      officers.map(o => `
+        <option value="${escapeHtml(o.id)}" ${o.id === selectedId ? 'selected' : ''}>
+          ${escapeHtml(o.full_name)} (${escapeHtml(o.role === 'ADMIN' ? 'Admin' : o.bureau)})
+        </option>
+      `).join('');
+  } catch (err) {
+    console.warn('Failed to fetch officers:', err);
+  }
+}
+
+async function onEditBureauChanged() {
+  const bureau = document.getElementById('editBureau')?.value;
+  if (bureau) {
+    await populateOfficersDropdown(bureau, 'editAssignedOfficerId', null);
+  }
+}
+
 async function openEditModal(complaintId) {
   try {
+    if (currentUser && currentUser.role === 'GUEST_STUDENT') {
+      showToast('Access restricted: Complainants cannot edit administrative records.', 'error');
+      return;
+    }
+
     const res = await fetch(`/api/complaints/${complaintId}`);
     if (!res.ok) throw new Error('Complaint not found');
     const data = await res.json();
 
     document.getElementById('editComplaintId').value = data.id;
     document.getElementById('editCaseIdBadge').textContent = data.id;
-    document.getElementById('editStatus').value = data.status;
     document.getElementById('editBureau').value = data.bureau;
     document.getElementById('editPriority').value = data.priority;
     document.getElementById('editTargetDate').value = data.target_date;
     document.getElementById('editRemarks').value = data.resolution_remarks || '';
-
-    const officerInput = document.getElementById('editAssignedOfficer');
-    if (officerInput) officerInput.value = data.assigned_officer || '';
 
     const nextActionInput = document.getElementById('editNextAction');
     if (nextActionInput) nextActionInput.value = data.next_action || '';
 
     const docsInput = document.getElementById('editSupportingDocs');
     if (docsInput) docsInput.value = data.supporting_docs || '';
+
+    const notesInput = document.getElementById('editInvestigationNotes');
+    if (notesInput) notesInput.value = data.investigation_notes || '';
+
+    // Populate and configure assigned officer dropdown
+    await populateOfficersDropdown(data.bureau, 'editAssignedOfficerId', data.assigned_officer_id);
+    // Transparent, workload-based assignment recommendations (staff only)
+    loadAssignmentRecommendations(complaintId);
+
+    const isOfficer = currentUser && currentUser.role === 'BUREAU_OFFICER';
+    const statusSelect = document.getElementById('editStatus');
+    const bureauSelect = document.getElementById('editBureau');
+    const officerSelect = document.getElementById('editAssignedOfficerId');
+    const bureauAdminBadge = document.getElementById('editBureauAdminOnlyBadge');
+    const officerAdminBadge = document.getElementById('editOfficerAdminOnlyBadge');
+    const btnOpenSubmitRes = document.getElementById('btnOpenSubmitRes');
+
+    if (isOfficer) {
+      if (bureauSelect) bureauSelect.disabled = true;
+      if (officerSelect) officerSelect.disabled = true;
+      if (bureauAdminBadge) bureauAdminBadge.textContent = '(Locked: Admin Only)';
+      if (officerAdminBadge) officerAdminBadge.textContent = '(Locked: Admin Only)';
+
+      if (statusSelect) {
+        statusSelect.innerHTML = `
+          <option value="Under Bureau Scrutiny">Under Bureau Scrutiny</option>
+          <option value="Notice Issued to Institute">Notice Issued to Institute</option>
+          <option value="Hearing / Inquiry Scheduled">Hearing / Inquiry Scheduled</option>
+        `;
+        const allowed = ['Under Bureau Scrutiny', 'Notice Issued to Institute', 'Hearing / Inquiry Scheduled'];
+        statusSelect.value = allowed.includes(data.status) ? data.status : 'Under Bureau Scrutiny';
+      }
+
+      if (btnOpenSubmitRes) {
+        btnOpenSubmitRes.style.display = (data.status === 'Resolved' || data.status === 'Rejected / Closed') ? 'none' : 'inline-flex';
+      }
+    } else {
+      if (bureauSelect) bureauSelect.disabled = false;
+      if (officerSelect) officerSelect.disabled = false;
+      if (bureauAdminBadge) bureauAdminBadge.textContent = '(Admin Only)';
+      if (officerAdminBadge) officerAdminBadge.textContent = '(Admin Only)';
+
+      if (statusSelect) {
+        statusSelect.innerHTML = `
+          <option value="Submitted">Submitted (New Case)</option>
+          <option value="Under Bureau Scrutiny">Under Bureau Scrutiny</option>
+          <option value="Notice Issued to Institute">Notice Issued to Institute</option>
+          <option value="Hearing / Inquiry Scheduled">Hearing / Inquiry Scheduled</option>
+          <option value="Pending Admin Review">Pending Admin Review</option>
+          <option value="Transferred">Transferred (Forwarded to Another Cell)</option>
+          <option value="Escalated">Escalated (Higher Vigilance / Apex Review)</option>
+          <option value="Resolved">Resolved / Disposed</option>
+          <option value="Rejected / Closed">Rejected / Closed</option>
+        `;
+        statusSelect.value = data.status;
+      }
+
+      if (btnOpenSubmitRes) {
+        btnOpenSubmitRes.style.display = 'inline-flex';
+      }
+    }
 
     const modal = document.getElementById('editModal');
     if (modal) modal.classList.remove('hidden');
@@ -1368,7 +1689,8 @@ async function submitEditComplaint(e) {
     target_date: document.getElementById('editTargetDate')?.value,
     resolution_remarks: document.getElementById('editRemarks')?.value,
     officer_name: document.getElementById('editOfficer')?.value,
-    assigned_officer: document.getElementById('editAssignedOfficer')?.value,
+    assigned_officer_id: document.getElementById('editAssignedOfficerId')?.value || undefined,
+    investigation_notes: document.getElementById('editInvestigationNotes')?.value || undefined,
     next_action: document.getElementById('editNextAction')?.value,
     supporting_docs: document.getElementById('editSupportingDocs')?.value
   };
@@ -1380,13 +1702,205 @@ async function submitEditComplaint(e) {
       body: JSON.stringify(payload)
     });
 
-    if (!res.ok) throw new Error('Failed to update case');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to update case');
 
     closeEditModal();
     showToast(`Case ${id} updated successfully`);
     await loadAllData();
   } catch (err) {
     showToast('Error saving updates: ' + err.message, 'error');
+  }
+}
+
+// -------------------------------------------------------------
+// RESOLUTION SUBMISSION & ADMIN REVIEW WORKFLOW
+// -------------------------------------------------------------
+function openSubmitResolutionFromEdit() {
+  const id = document.getElementById('editComplaintId')?.value;
+  closeEditModal();
+  if (id) openSubmitResolutionModal(id);
+}
+
+function openSubmitResolutionFromDrawer() {
+  if (activeDrawerComplaintId) {
+    closeDrawer();
+    openSubmitResolutionModal(activeDrawerComplaintId);
+  }
+}
+
+async function openSubmitResolutionModal(complaintId) {
+  try {
+    const res = await fetch(`/api/complaints/${complaintId}`);
+    if (!res.ok) throw new Error('Complaint not found');
+    const data = await res.json();
+
+    document.getElementById('submitResComplaintId').value = data.id;
+    document.getElementById('submitResCaseId').textContent = data.id;
+    document.getElementById('submitResSubject').textContent = data.subject;
+    document.getElementById('submitResSummary').value = data.investigation_notes || data.resolution_remarks || '';
+    document.getElementById('submitResDocs').value = data.supporting_docs || '';
+
+    const modal = document.getElementById('submitResolutionModal');
+    if (modal) modal.classList.remove('hidden');
+    lucide.createIcons();
+  } catch (err) {
+    showToast('Failed to open submission modal: ' + err.message, 'error');
+  }
+}
+
+function closeSubmitResolutionModal() {
+  const modal = document.getElementById('submitResolutionModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function executeSubmitResolution(e) {
+  e.preventDefault();
+  const id = document.getElementById('submitResComplaintId')?.value;
+  const resolution_summary = document.getElementById('submitResSummary')?.value?.trim();
+  const supporting_docs = document.getElementById('submitResDocs')?.value?.trim();
+
+  if (!id || !resolution_summary) {
+    showToast('Resolution summary is required.', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/complaints/${id}/submit-resolution`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resolution_summary, supporting_docs })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to submit resolution');
+
+    closeSubmitResolutionModal();
+    showToast(`Case ${id} submitted to Central Admin for final review!`, 'success');
+    await loadAllData();
+  } catch (err) {
+    showToast('Error submitting resolution: ' + err.message, 'error');
+  }
+}
+
+function openAdminReviewFromDrawer() {
+  if (activeDrawerComplaintId) {
+    closeDrawer();
+    openAdminReviewModal(activeDrawerComplaintId);
+  }
+}
+
+async function openAdminReviewModal(complaintId) {
+  try {
+    const res = await fetch(`/api/complaints/${complaintId}`);
+    if (!res.ok) throw new Error('Complaint not found');
+    const data = await res.json();
+
+    document.getElementById('adminReviewComplaintId').value = data.id;
+    document.getElementById('adminReviewCaseId').textContent = data.id;
+    document.getElementById('adminReviewSubject').textContent = data.subject;
+    document.getElementById('adminReviewBureauBadge').textContent = data.bureau;
+    document.getElementById('adminReviewInstitution').textContent = `${data.institution_name} (${data.institution_id})`;
+    document.getElementById('adminReviewOfficer').textContent = `${data.assigned_officer || 'Desk Officer'}`;
+    document.getElementById('adminReviewOfficerNotes').textContent = data.investigation_notes || data.resolution_remarks || 'No detailed findings entered by officer.';
+
+    // Documents
+    const docsList = document.getElementById('adminReviewDocumentsList');
+    if (docsList) {
+      if (data.attachedDocuments && data.attachedDocuments.length > 0) {
+        docsList.innerHTML = data.attachedDocuments.map(d => `
+          <div class="flex items-center justify-between p-2 rounded bg-slate-50 border border-slate-200 text-xs">
+            <span class="truncate text-slate-700 font-medium">${escapeHtml(d.original_filename)} (${Math.round(d.file_size / 1024)} KB)</span>
+            <div class="space-x-1 shrink-0">
+              <a href="/api/documents/${encodeURIComponent(d.id)}/view" target="_blank" class="px-2 py-0.5 text-[11px] bg-blue-100 text-blue-700 rounded hover:bg-blue-200 font-semibold">View</a>
+              <a href="/api/documents/${encodeURIComponent(d.id)}/download" class="px-2 py-0.5 text-[11px] bg-slate-200 text-slate-700 rounded hover:bg-slate-300">Download</a>
+            </div>
+          </div>
+        `).join('');
+      } else {
+        docsList.innerHTML = '<div class="text-xs text-slate-400 italic">No attached documents found.</div>';
+      }
+    }
+
+    // Populate officers for reassignment dropdown
+    await populateOfficersDropdown(data.bureau, 'adminReviewOfficerSelect', null);
+
+    // Reset decision tab to approve
+    selectAdminActionTab('approve');
+
+    const modal = document.getElementById('adminReviewModal');
+    if (modal) modal.classList.remove('hidden');
+    lucide.createIcons();
+  } catch (err) {
+    showToast('Failed to open Admin review modal: ' + err.message, 'error');
+  }
+}
+
+function closeAdminReviewModal() {
+  const modal = document.getElementById('adminReviewModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function selectAdminActionTab(action) {
+  const panels = ['approve', 'return', 'reassign'];
+  panels.forEach(p => {
+    const panelEl = document.getElementById(`panelAction${p.charAt(0).toUpperCase() + p.slice(1)}`);
+    const btnEl = document.getElementById(`tabBtnAction${p.charAt(0).toUpperCase() + p.slice(1)}`);
+    if (panelEl) panelEl.classList.toggle('hidden', p !== action);
+    if (btnEl) {
+      if (p === action) {
+        btnEl.className = 'p-2.5 rounded-xl border-2 border-blue-600 bg-blue-50 text-blue-900 text-xs font-bold flex items-center justify-center space-x-1 transition';
+      } else {
+        btnEl.className = 'p-2.5 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:border-blue-400 hover:bg-slate-50 flex items-center justify-center space-x-1 transition';
+      }
+    }
+  });
+}
+
+async function executeAdminDecision(decision) {
+  const id = document.getElementById('adminReviewComplaintId')?.value;
+  if (!id) return;
+
+  const payload = { decision };
+
+  if (decision === 'APPROVE') {
+    payload.admin_notes = document.getElementById('adminReviewApproveRemarks')?.value?.trim();
+    if (!payload.admin_notes || payload.admin_notes.length < 5) {
+      showToast('Mandatory closure order remarks (minimum 5 characters) are required.', 'error');
+      return;
+    }
+  } else if (decision === 'RETURN') {
+    payload.admin_notes = document.getElementById('adminReviewReturnReason')?.value?.trim();
+    if (!payload.admin_notes || payload.admin_notes.length < 5) {
+      showToast('Mandatory return reason (minimum 5 characters) is required.', 'error');
+      return;
+    }
+  } else if (decision === 'REASSIGN') {
+    payload.new_officer_id = document.getElementById('adminReviewOfficerSelect')?.value;
+    payload.reassignment_reason = document.getElementById('adminReviewReassignReason')?.value?.trim();
+    if (!payload.new_officer_id) {
+      showToast('Please select a target officer to reassign this case to.', 'error');
+      return;
+    }
+    if (!payload.reassignment_reason || payload.reassignment_reason.length < 5) {
+      showToast('Mandatory reassignment reason (minimum 5 characters) is required.', 'error');
+      return;
+    }
+  }
+
+  try {
+    const res = await fetch(`/api/complaints/${id}/review-resolution`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to process decision');
+
+    closeAdminReviewModal();
+    showToast(data.message, 'success');
+    await loadAllData();
+  } catch (err) {
+    showToast('Error processing admin decision: ' + err.message, 'error');
   }
 }
 
@@ -1434,12 +1948,14 @@ function exportToCSV() {
     'Complainant_Email',
     'Complainant_Phone',
     'Subject',
+    'Description',
     'Target_SLA_Date',
     'Is_Overdue',
     'Assigned_Officer',
     'Last_Action',
     'Next_Action',
     'Linked_Group_ID',
+    'Source_Reference',
     'Created_Date'
   ];
 
@@ -1459,12 +1975,14 @@ function exportToCSV() {
     `"${c.complainant_email || ''}"`,
     `"${c.complainant_phone || ''}"`,
     `"${(c.subject || '').replace(/"/g, '""')}"`,
+    `"${(c.description || '').replace(/"/g, '""')}"`,
     `"${c.target_date}"`,
     c.isOverdue ? 'YES' : 'NO',
     `"${(c.assigned_officer || '').replace(/"/g, '""')}"`,
     `"${(c.last_action || '').replace(/"/g, '""')}"`,
     `"${(c.next_action || '').replace(/"/g, '""')}"`,
     `"${c.linked_group_id || ''}"`,
+    `"${(c.source_reference || c.id).replace(/"/g, '""')}"`,
     `"${c.created_at}"`
   ]);
 
@@ -1529,6 +2047,669 @@ function showToast(message, type = 'success') {
 }
 
 // -------------------------------------------------------------
+// PRIORITY 2 UI: VALIDATED CSV IMPORT (ADMIN / BUREAU OFFICER)
+// Talks to POST /api/complaints/import with a JSON body: { csv: "<raw text>" }
+// -------------------------------------------------------------
+let pendingImportCsvText = null;
+const IMPORT_CSV_MAX_BYTES = 2 * 1024 * 1024; // 2 MB safety cap for the browser
+
+function canImportCsv() {
+  return !!currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'BUREAU_OFFICER');
+}
+
+function openImportModal() {
+  if (!canImportCsv()) {
+    showToast('CSV import is restricted to Central Admin and Bureau Officer roles.', 'error');
+    return;
+  }
+  const modal = document.getElementById('importCsvModal');
+  if (modal) modal.classList.remove('hidden');
+  resetImportCsvUI();
+  lucide.createIcons();
+}
+
+function closeImportModal() {
+  const modal = document.getElementById('importCsvModal');
+  if (modal) modal.classList.add('hidden');
+  resetImportCsvUI();
+}
+
+function resetImportCsvUI() {
+  pendingImportCsvText = null;
+  const fileInput = document.getElementById('importCsvFile');
+  if (fileInput) fileInput.value = '';
+  const info = document.getElementById('importCsvFileInfo');
+  if (info) {
+    info.textContent = 'No file selected.';
+    info.className = 'text-xs text-slate-500 mt-1';
+  }
+  const previewWrap = document.getElementById('importCsvPreviewWrap');
+  if (previewWrap) previewWrap.classList.add('hidden');
+  const results = document.getElementById('importCsvResults');
+  if (results) {
+    results.classList.add('hidden');
+    results.innerHTML = '';
+  }
+  setImportCsvSubmitting(false);
+}
+
+function setImportCsvSubmitting(isSubmitting) {
+  const btn = document.getElementById('importCsvSubmitBtn');
+  const label = document.getElementById('importCsvSubmitLabel');
+  if (btn) btn.disabled = isSubmitting;
+  if (label) label.textContent = isSubmitting ? 'Importing…' : 'Import';
+}
+
+function setImportCsvSubmitEnabled(enabled, rowHint) {
+  const btn = document.getElementById('importCsvSubmitBtn');
+  const label = document.getElementById('importCsvSubmitLabel');
+  if (btn) btn.disabled = !enabled;
+  if (label) label.textContent = rowHint || 'Import';
+}
+
+// Compact RFC 4180 parser used ONLY for the pre-submit preview; the server's
+// parser (services/csvService.js) is authoritative for validation.
+function parseCsvForPreview(text) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const rows = [];
+  let cells = [];
+  let field = '';
+  let inQuotes = false;
+  let i = 0;
+  const pushField = () => { cells.push(field); field = ''; };
+  const pushRow = () => { pushField(); rows.push(cells); cells = []; };
+  while (i < text.length) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i++; continue;
+      }
+      field += ch; i++; continue;
+    }
+    if (ch === '"' && field === '') { inQuotes = true; i++; continue; }
+    if (ch === ',') { pushField(); i++; continue; }
+    if (ch === '\r') { pushRow(); i += text[i + 1] === '\n' ? 2 : 1; continue; }
+    if (ch === '\n') { pushRow(); i++; continue; }
+    field += ch; i++;
+  }
+  pushRow();
+  return rows.filter(r => r.some(c => c.trim() !== ''));
+}
+
+async function handleImportCsvFileSelected(event) {
+  const file = event.target.files && event.target.files[0];
+  const info = document.getElementById('importCsvFileInfo');
+  const previewWrap = document.getElementById('importCsvPreviewWrap');
+  if (previewWrap) previewWrap.classList.add('hidden');
+
+  if (!file) {
+    pendingImportCsvText = null;
+    if (info) info.textContent = 'No file selected.';
+    setImportCsvSubmitEnabled(false);
+    return;
+  }
+
+  if (!/\.csv$/i.test(file.name)) {
+    pendingImportCsvText = null;
+    if (info) {
+      info.textContent = `"${file.name}" rejected: only .csv files are accepted.`;
+      info.className = 'text-xs text-red-600 mt-1 font-medium';
+    }
+    setImportCsvSubmitEnabled(false);
+    showToast('Please select a .csv file.', 'error');
+    return;
+  }
+
+  if (file.size > IMPORT_CSV_MAX_BYTES) {
+    pendingImportCsvText = null;
+    if (info) {
+      info.textContent = `"${file.name}" is too large (limit 2 MB for browser import).`;
+      info.className = 'text-xs text-red-600 mt-1 font-medium';
+    }
+    setImportCsvSubmitEnabled(false);
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    if (!text.trim()) {
+      pendingImportCsvText = null;
+      if (info) {
+        info.textContent = `"${file.name}" is empty — nothing to import.`;
+        info.className = 'text-xs text-amber-700 mt-1 font-medium';
+      }
+      setImportCsvSubmitEnabled(false);
+      return;
+    }
+    pendingImportCsvText = text;
+
+    const kb = Math.max(1, Math.round(file.size / 1024));
+    if (info) {
+      info.textContent = `Selected: ${file.name} (${kb} KB) — ready for preview.`;
+      info.className = 'text-xs text-emerald-700 mt-1 font-medium';
+    }
+    renderImportCsvPreview(text, file.name);
+  } catch (err) {
+    pendingImportCsvText = null;
+    if (info) {
+      info.textContent = `Could not read file: ${err.message}`;
+      info.className = 'text-xs text-red-600 mt-1 font-medium';
+    }
+    setImportCsvSubmitEnabled(false);
+  }
+}
+
+function renderImportCsvPreview(text, fileName) {
+  const rows = parseCsvForPreview(text);
+  const previewWrap = document.getElementById('importCsvPreviewWrap');
+  const headEl = document.getElementById('importCsvPreviewHead');
+  const bodyEl = document.getElementById('importCsvPreviewBody');
+  const metaEl = document.getElementById('importCsvPreviewMeta');
+  if (!previewWrap || !headEl || !bodyEl) return;
+
+  if (rows.length === 0) {
+    setImportCsvSubmitEnabled(false);
+    if (metaEl) metaEl.textContent = 'No rows found.';
+    previewWrap.classList.remove('hidden');
+    return;
+  }
+
+  const header = rows[0];
+  const dataRows = rows.slice(1);
+  const PREVIEW_LIMIT = 8;
+
+  headEl.innerHTML = `<tr><th class="py-2 px-3 w-10 text-slate-400">#</th>` +
+    header.map(h => `<th class="py-2 px-3 whitespace-nowrap">${escapeHtml(h.trim())}</th>`).join('') +
+    `</tr>`;
+
+  bodyEl.innerHTML = dataRows.slice(0, PREVIEW_LIMIT).map((r, idx) => `
+    <tr class="hover:bg-slate-50">
+      <td class="py-1.5 px-3 text-slate-400 font-mono">${idx + 2}</td>
+      ${header.map((_, colIdx) => `<td class="py-1.5 px-3 text-slate-700 max-w-[180px] truncate" title="${escapeHtml(r[colIdx] || '')}">${escapeHtml(r[colIdx] || '')}</td>`).join('')}
+    </tr>
+  `).join('');
+
+  if (metaEl) {
+    metaEl.textContent = `${fileName}: ${dataRows.length} data row${dataRows.length === 1 ? '' : 's'}, ` +
+      `${header.length} column${header.length === 1 ? '' : 's'}` +
+      (dataRows.length > PREVIEW_LIMIT ? ` — showing first ${PREVIEW_LIMIT}` : '');
+  }
+
+  previewWrap.classList.remove('hidden');
+  setImportCsvSubmitEnabled(true, `Import ${dataRows.length} row${dataRows.length === 1 ? '' : 's'}`);
+}
+
+async function confirmImportCsv() {
+  if (pendingImportCsvText === null || !canImportCsv()) return;
+
+  const results = document.getElementById('importCsvResults');
+  setImportCsvSubmitting(true);
+  if (results) {
+    results.classList.remove('hidden');
+    results.innerHTML = `<div class="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center space-x-2">
+      <i data-lucide="loader" class="w-4 h-4 animate-spin text-emerald-600"></i>
+      <span>Validating and importing rows on the server…</span>
+    </div>`;
+    lucide.createIcons();
+  }
+
+  try {
+    const res = await fetch('/api/complaints/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ csv: pendingImportCsvText })
+    });
+
+    let data = null;
+    try { data = await res.json(); } catch (_) { /* non-JSON error body */ }
+
+    if (res.status === 201 && data) {
+      renderImportCsvResults(data);
+      showToast(`CSV import complete: ${data.imported} imported, ${data.duplicates} duplicate(s), ${data.failed} failed.`, data.failed > 0 ? 'warning' : 'success');
+      // Refresh registry, stats and institutions to reflect the new cases
+      fetchComplaints().catch(err => console.warn('Refresh after import failed:', err.message));
+      fetchStats().catch(err => console.warn('Stats refresh after import failed:', err.message));
+      fetchInstitutions().catch(err => console.warn('Institutions refresh after import failed:', err.message));
+      // Reset picker for a possible next file, but keep results visible
+      const fileInput = document.getElementById('importCsvFile');
+      if (fileInput) fileInput.value = '';
+      pendingImportCsvText = null;
+      const info = document.getElementById('importCsvFileInfo');
+      if (info) {
+        info.textContent = 'Import finished — select another file to import more cases.';
+        info.className = 'text-xs text-slate-500 mt-1';
+      }
+      setImportCsvSubmitEnabled(false);
+    } else if (res.status === 401 || res.status === 403) {
+      const msg = (data && data.error) || 'You are not authorised to import complaints.';
+      renderImportCsvError(msg);
+      showToast(msg, 'error');
+    } else if (res.status === 413) {
+      const msg = (data && data.error) || 'The selected CSV file is too large. The maximum supported size is 2 MB — please split it into smaller files and import them one after another.';
+      renderImportCsvError(msg);
+      showToast(msg, 'error');
+    } else {
+      const msg = (data && data.error) || `Import request failed (HTTP ${res.status}).`;
+      renderImportCsvError(msg);
+      showToast(msg, 'error');
+    }
+  } catch (err) {
+    renderImportCsvError(`Network/server error: ${err.message}`);
+    showToast('Import failed: ' + err.message, 'error');
+  } finally {
+    setImportCsvSubmitting(false);
+  }
+}
+
+function renderImportCsvError(message) {
+  const results = document.getElementById('importCsvResults');
+  if (!results) return;
+  results.classList.remove('hidden');
+  results.innerHTML = `
+    <div class="text-xs bg-red-50 border border-red-200 text-red-800 rounded-xl p-3">
+      <strong class="block mb-1">Import could not be processed</strong>
+      ${escapeHtml(message)}
+    </div>`;
+}
+
+function renderImportCsvResults(data) {
+  const results = document.getElementById('importCsvResults');
+  if (!results) return;
+  results.classList.remove('hidden');
+
+  const summary = `
+    <div class="grid grid-cols-3 gap-2 text-center text-xs">
+      <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+        <span class="block text-[10px] uppercase font-bold text-emerald-600">Imported</span>
+        <strong class="text-xl text-emerald-800 font-mono">${escapeHtml(data.imported)}</strong>
+      </div>
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3">
+        <span class="block text-[10px] uppercase font-bold text-amber-600">Duplicates</span>
+        <strong class="text-xl text-amber-800 font-mono">${escapeHtml(data.duplicates)}</strong>
+      </div>
+      <div class="bg-red-50 border border-red-200 rounded-xl p-3">
+        <span class="block text-[10px] uppercase font-bold text-red-600">Failed rows</span>
+        <strong class="text-xl text-red-800 font-mono">${escapeHtml(data.failed)}</strong>
+      </div>
+    </div>`;
+
+  let importedBlock = '';
+  if (data.created && data.created.length > 0) {
+    importedBlock = `
+      <div>
+        <span class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Successfully imported</span>
+        <div class="space-y-1 max-h-32 overflow-y-auto">
+          ${data.created.map(c => `
+            <div class="text-[11px] bg-emerald-50/60 border border-emerald-100 rounded-lg px-2.5 py-1.5 flex items-center justify-between">
+              <span class="font-mono font-bold text-emerald-800">${escapeHtml(c.complaint_id)}</span>
+              <span class="text-slate-500">src: <span class="font-mono">${escapeHtml(c.source_reference)}</span></span>
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+  }
+
+  let duplicatesBlock = '';
+  if (data.duplicate_rows && data.duplicate_rows.length > 0) {
+    duplicatesBlock = `
+      <div>
+        <span class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Duplicate source references (skipped — original cases preserved)</span>
+        <div class="space-y-1 max-h-32 overflow-y-auto">
+          ${data.duplicate_rows.map(d => `
+            <div class="text-[11px] bg-amber-50/60 border border-amber-100 rounded-lg px-2.5 py-1.5">
+              <div class="flex items-center justify-between">
+                <span class="font-mono text-amber-900">${escapeHtml(d.source_reference)}</span>
+                <span class="text-slate-500">line ${escapeHtml(d.line)}</span>
+              </div>
+              <div class="text-slate-600 mt-0.5">
+                ${d.existing_case_id
+                  ? `Already linked to case <span class="font-mono font-semibold">${escapeHtml(d.existing_case_id)}</span>`
+                  : escapeHtml(d.reason || 'Duplicate')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+  }
+
+  let errorsBlock = '';
+  if (data.errors && data.errors.length > 0) {
+    errorsBlock = `
+      <div>
+        <span class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Failed rows (nothing was imported for these lines)</span>
+        <div class="space-y-1 max-h-40 overflow-y-auto">
+          ${data.errors.map(e => `
+            <div class="text-[11px] bg-red-50/60 border border-red-100 rounded-lg px-2.5 py-1.5">
+              <div class="flex items-center justify-between">
+                <span class="font-mono font-bold text-red-800">Line ${escapeHtml(e.line)}</span>
+                ${e.source_reference ? `<span class="text-slate-500 font-mono">${escapeHtml(e.source_reference)}</span>` : ''}
+              </div>
+              ${(e.errors || []).map(ie => `<div class="text-slate-600 mt-0.5">• <strong>${escapeHtml(ie.field || '(row)')}:</strong> ${escapeHtml(ie.message)}</div>`).join('')}
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+  }
+
+  const emptyNote = (data.imported === 0 && data.duplicates > 0 && data.failed === 0)
+    ? `<div class="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">Every row in this file was already imported earlier (duplicate source references). No new cases were created and existing cases were not modified.</div>`
+    : '';
+
+  results.innerHTML = summary + emptyNote + importedBlock + duplicatesBlock + errorsBlock;
+}
+
+// -------------------------------------------------------------
+// PHASES 7 & 8 UI: ASSIGNMENT RECOMMENDATIONS + CROSS-BUREAU COORDINATION
+// Recommendations are transparent and data-driven (bureau match + real
+// active/overdue caseload only — no invented expertise metrics).
+// -------------------------------------------------------------
+const COORDINATION_BUREAUS = [
+  'Student Grievance Redressal Cell (SGRC)',
+  'Approval Bureau',
+  'Anti-Ragging Cell',
+  'Faculty & Staff Grievance Cell',
+  'Vigilance Cell',
+  'Legal Cell',
+  'Regional Bureau / Regional Office (RB)',
+  'Public Grievance Redressal Cell (PGRC)'
+];
+
+function isStaffUser() {
+  return !!currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'BUREAU_OFFICER');
+}
+
+function sameBureau(a, b) {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
+async function loadAssignmentRecommendations(complaintId) {
+  const box = document.getElementById('assignRecsBox');
+  const list = document.getElementById('assignRecsList');
+  if (!box || !list || !isStaffUser()) return;
+  try {
+    const res = await fetch(`/api/complaints/${complaintId}/assignment-recommendations`);
+    if (!res.ok) { box.classList.add('hidden'); return; }
+    const data = await res.json();
+    if (!data.recommendations || data.recommendations.length === 0) {
+      box.classList.add('hidden');
+      return;
+    }
+    list.innerHTML = data.recommendations.map(r => `
+      <div class="bg-white border border-blue-100 rounded-lg px-2.5 py-2 flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <div class="font-semibold text-slate-800">#${escapeHtml(r.rank)} ${escapeHtml(r.full_name)} <span class="text-slate-400 font-normal">(${escapeHtml(r.bureau)})</span></div>
+          <div class="text-[11px] text-slate-500 mt-0.5">${escapeHtml(r.explanation)}</div>
+        </div>
+        <button type="button" onclick="applyRecommendedOfficer('${escapeHtml(r.officer_id)}')" class="shrink-0 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold rounded transition">Use</button>
+      </div>
+    `).join('');
+    box.classList.remove('hidden');
+  } catch (err) {
+    box.classList.add('hidden');
+  }
+}
+
+function applyRecommendedOfficer(officerId) {
+  const select = document.getElementById('editAssignedOfficerId');
+  if (!select) return;
+  const exists = Array.from(select.options).some(o => o.value === officerId);
+  if (exists) {
+    select.value = officerId;
+    showToast('Recommended officer selected — click "Save Changes" to apply.', 'success');
+  } else {
+    showToast('That officer is not in the current bureau list; please select manually.', 'error');
+  }
+}
+
+async function openCoordinationModal() {
+  if (!isStaffUser() || !activeDrawerComplaintId) return;
+  document.getElementById('coordCaseId').textContent = activeDrawerComplaintId;
+  const select = document.getElementById('coordBureauSelect');
+  let ownBureau = null;
+  try {
+    const res = await fetch(`/api/complaints/${activeDrawerComplaintId}`);
+    if (res.ok) ownBureau = (await res.json()).bureau;
+  } catch (err) { /* ownBureau stays null; all bureaus listed */ }
+
+  const options = COORDINATION_BUREAUS.filter(b => !sameBureau(b, ownBureau));
+  select.innerHTML = '<option value="">-- Select Receiving Bureau --</option>' +
+    options.map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+
+  const reasonEl = document.getElementById('coordReason');
+  if (reasonEl) reasonEl.value = '';
+
+  const modal = document.getElementById('coordinationModal');
+  if (modal) modal.classList.remove('hidden');
+  lucide.createIcons();
+}
+
+function closeCoordinationModal() {
+  const modal = document.getElementById('coordinationModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function submitCoordinationRequest(e) {
+  e.preventDefault();
+  const bureau = document.getElementById('coordBureauSelect')?.value;
+  const reason = document.getElementById('coordReason')?.value?.trim();
+  if (!bureau) { showToast('Please select a receiving bureau.', 'error'); return; }
+  if (!reason || reason.length < 10) { showToast('A coordination reason of at least 10 characters is required.', 'error'); return; }
+  try {
+    const res = await fetch(`/api/complaints/${activeDrawerComplaintId}/coordination`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requested_bureau: bureau, reason })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to submit coordination request');
+    showToast(data.message || 'Coordination request submitted.', 'success');
+    closeCoordinationModal();
+    renderDrawerCoordination(activeDrawerComplaintId);
+  } catch (err) {
+    showToast('Coordination request failed: ' + err.message, 'error');
+  }
+}
+
+async function renderDrawerCoordination(complaintId) {
+  const list = document.getElementById('drawerCoordinationList');
+  if (!list) return;
+  try {
+    const res = await fetch('/api/coordination');
+    if (!res.ok) { list.innerHTML = ''; return; }
+    const rows = (await res.json()).filter(r => r.source_complaint_id === complaintId);
+    if (rows.length === 0) {
+      list.innerHTML = '<div class="text-xs text-slate-400 italic">No coordination requests for this case yet.</div>';
+      return;
+    }
+    const statusStyles = {
+      PENDING: 'bg-amber-100 text-amber-900 border-amber-300',
+      ACCEPTED: 'bg-blue-100 text-blue-900 border-blue-300',
+      REJECTED: 'bg-red-100 text-red-800 border-red-300',
+      COMPLETED: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+      CANCELLED: 'bg-slate-100 text-slate-600 border-slate-300'
+    };
+    const btnCls = 'px-2 py-0.5 rounded text-[10px] font-bold border transition';
+    list.innerHTML = rows.map(r => {
+      const isRequestedSide = currentUser.role === 'ADMIN' || sameBureau(currentUser.bureau, r.requested_bureau);
+      const isRequestingSide = currentUser.role === 'ADMIN' || sameBureau(currentUser.bureau, r.requesting_bureau);
+      let actions = '';
+      if (r.status === 'PENDING') {
+        if (isRequestedSide) {
+          actions += `<button onclick="respondCoordination(${r.id}, 'ACCEPT')" class="${btnCls} bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700">Accept</button>`;
+          actions += `<button onclick="respondCoordination(${r.id}, 'REJECT')" class="${btnCls} bg-red-50 hover:bg-red-100 text-red-700 border-red-200 ml-1">Reject</button>`;
+        }
+        if (isRequestingSide) {
+          actions += `<button onclick="respondCoordination(${r.id}, 'CANCELLED')" class="${btnCls} bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200 ml-1">Cancel</button>`;
+        }
+      } else if (r.status === 'ACCEPTED') {
+        if (isRequestedSide) {
+          actions += `<button onclick="respondCoordination(${r.id}, 'COMPLETED')" class="${btnCls} bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700">Mark Completed</button>`;
+        }
+        if (isRequestingSide) {
+          actions += `<button onclick="respondCoordination(${r.id}, 'CANCELLED')" class="${btnCls} bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200 ml-1">Cancel</button>`;
+        }
+      }
+      return `
+        <div class="text-[11px] bg-purple-50/50 border border-purple-100 rounded-lg px-2.5 py-2">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-slate-700"><strong>${escapeHtml(r.requesting_bureau)}</strong> &rarr; <strong>${escapeHtml(r.requested_bureau)}</strong></span>
+            <span class="px-1.5 py-0.5 rounded border text-[10px] font-bold ${statusStyles[r.status] || 'bg-slate-100 text-slate-600 border-slate-200'}">${escapeHtml(r.status)}</span>
+          </div>
+          <div class="text-slate-500 mt-0.5">${escapeHtml(r.reason)}</div>
+          ${r.responded_by ? `<div class="text-slate-400 mt-0.5">By ${escapeHtml(r.responded_by)}${r.response_remarks ? `: ${escapeHtml(r.response_remarks)}` : ''}</div>` : `<div class="text-slate-400 mt-0.5">Requested by ${escapeHtml(r.requested_by)}</div>`}
+          ${actions ? `<div class="mt-1.5 flex items-center">${actions}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+    lucide.createIcons();
+  } catch (err) {
+    list.innerHTML = '';
+  }
+}
+
+async function respondCoordination(requestId, decision) {
+  const label = { ACCEPT: 'accept', REJECT: 'reject', COMPLETED: 'mark completed', CANCELLED: 'cancel' }[decision] || decision;
+  const needRemarks = decision !== 'CANCELLED';
+  const remarks = window.prompt(`Official remark for "${label}"${needRemarks ? ' (minimum 5 characters)' : ' (optional)'}:`, '');
+  if (remarks === null) return;
+  try {
+    const res = await fetch(`/api/coordination/${requestId}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision, remarks })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to update coordination request');
+    showToast(data.message || 'Coordination updated.', 'success');
+    if (activeDrawerComplaintId) renderDrawerCoordination(activeDrawerComplaintId);
+  } catch (err) {
+    showToast('Coordination update failed: ' + err.message, 'error');
+  }
+}
+
+// -------------------------------------------------------------
+// USER MANAGEMENT UI (Admin only; backend enforces ADMIN on
+// GET/POST /api/users — this dialog is just the interface)
+// -------------------------------------------------------------
+async function openUsersModal() {
+  if (!currentUser || currentUser.role !== 'ADMIN') {
+    showToast('User management is restricted to Central Admin.', 'error');
+    return;
+  }
+  const modal = document.getElementById('usersModal');
+  if (modal) modal.classList.remove('hidden');
+  lucide.createIcons();
+  await refreshUsersList();
+}
+
+function closeUsersModal() {
+  const modal = document.getElementById('usersModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function onNewUserRoleChanged() {
+  const role = document.getElementById('newUserRole')?.value;
+  const bureauReq = document.getElementById('newUserBureauReq');
+  const bureauSelect = document.getElementById('newUserBureau');
+  const isOfficer = role === 'BUREAU_OFFICER';
+  if (bureauReq) bureauReq.style.display = isOfficer ? 'inline' : 'none';
+  if (bureauSelect) {
+    bureauSelect.required = isOfficer;
+    if (!isOfficer) bureauSelect.value = '';
+  }
+}
+
+async function refreshUsersList() {
+  const tbody = document.getElementById('usersTableBody');
+  const countEl = document.getElementById('usersListCount');
+  if (!tbody) return;
+  try {
+    const res = await fetch('/api/users');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to load users');
+    }
+    const users = await res.json();
+    if (countEl) countEl.textContent = `${users.length} account(s)`;
+    tbody.innerHTML = users.map(u => {
+      const roleBadge = u.role === 'ADMIN'
+        ? '<span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold border border-amber-300">ADMIN</span>'
+        : u.role === 'BUREAU_OFFICER'
+          ? '<span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-bold border border-blue-200">OFFICER</span>'
+          : '<span class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-200">STUDENT</span>';
+      const created = u.created_at ? String(u.created_at).split(' ')[0] : '--';
+      // Never offer self-deletion; the backend also blocks it (defence in depth)
+      const isSelf = currentUser && u.id === currentUser.id;
+      const actionCell = isSelf
+        ? '<span class="text-[10px] text-slate-400 italic" title="You cannot deactivate your own account">Signed-in</span>'
+        : `<button onclick="deactivateUserAccount('${escapeHtml(u.id)}', '${escapeHtml(u.full_name)}')" class="px-2 py-0.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded text-[10px] font-bold transition" title="Deactivate this account">Deactivate</button>`;
+      return `
+        <tr class="hover:bg-slate-50 transition">
+          <td class="py-2 px-3 font-medium text-slate-800">${escapeHtml(u.full_name)}</td>
+          <td class="py-2 px-3 text-slate-600 font-mono text-[11px]">${escapeHtml(u.username)}</td>
+          <td class="py-2 px-3">${roleBadge}</td>
+          <td class="py-2 px-3 text-slate-600 text-[11px]">${escapeHtml(u.bureau || '--')}</td>
+          <td class="py-2 px-3 text-slate-400 text-[11px]">${escapeHtml(created)}</td>
+          <td class="py-2 px-3 text-right whitespace-nowrap">${actionCell}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center py-6 text-red-500 text-xs">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function deactivateUserAccount(userId, fullName) {
+  if (!window.confirm(`Deactivate account "${fullName}"?\n\n• Their sessions end immediately (they will be logged out).\n• Cases still assigned to them must be reassigned first.\n• Past audit-history entries are preserved.`)) {
+    return;
+  }
+  try {
+    const res = await fetch(`/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to deactivate account');
+    showToast(data.message || 'Account deactivated.', 'success');
+    await refreshUsersList();
+  } catch (err) {
+    showToast('Deactivation failed: ' + err.message, 'error');
+  }
+}
+
+async function submitCreateUser(e) {
+  e.preventDefault();
+  const username = document.getElementById('newUserUsername')?.value?.trim();
+  const fullName = document.getElementById('newUserFullName')?.value?.trim();
+  const role = document.getElementById('newUserRole')?.value;
+  const bureau = document.getElementById('newUserBureau')?.value || null;
+  const password = document.getElementById('newUserPassword')?.value;
+  if (!username || !fullName || !role || !password) {
+    showToast('Please fill in all required fields.', 'error');
+    return;
+  }
+  if (role === 'BUREAU_OFFICER' && !bureau) {
+    showToast('A bureau must be selected for Bureau Officer accounts.', 'error');
+    return;
+  }
+  try {
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, fullName, role, bureau, password })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to create user');
+    showToast(data.message || 'User account created.', 'success');
+    // Reset form fields (keep role selection) and refresh list
+    document.getElementById('newUserUsername').value = '';
+    document.getElementById('newUserFullName').value = '';
+    document.getElementById('newUserPassword').value = '';
+    await refreshUsersList();
+  } catch (err) {
+    showToast('User creation failed: ' + err.message, 'error');
+  }
+}
+
+// -------------------------------------------------------------
 // STAGE 1: AUTHENTICATION & ROLE-BASED ACCESS CONTROL
 // -------------------------------------------------------------
 async function initAuth() {
@@ -1580,6 +2761,18 @@ function updateUserUI() {
     resetBtn.style.display = currentUser.role === 'ADMIN' ? 'inline-flex' : 'none';
   }
 
+  // CSV import: Admin + Bureau Officer only (server enforces the same rule)
+  const importCsvBtn = document.getElementById('btnImportCsv');
+  if (importCsvBtn) {
+    importCsvBtn.style.display = canImportCsv() ? 'inline-flex' : 'none';
+  }
+
+  // User management: Admin only (server enforces ADMIN on /api/users)
+  const manageUsersBtn = document.getElementById('btnManageUsers');
+  if (manageUsersBtn) {
+    manageUsersBtn.style.display = currentUser.role === 'ADMIN' ? 'inline-flex' : 'none';
+  }
+
   // If student, adjust complainant form fields
   const compRoleSelect = document.getElementById('addCompRole');
   if (compRoleSelect && currentUser.role === 'GUEST_STUDENT') {
@@ -1601,6 +2794,41 @@ function updateUserUI() {
     if (nameInput) nameInput.readOnly = false;
     const emailInput = document.getElementById('addCompEmail');
     if (emailInput) emailInput.readOnly = false;
+  }
+
+  // Role-specific navigation tabs and badges
+  const tabOverlaps = document.getElementById('tabBtn-overlapTab');
+  const tabReports = document.getElementById('tabBtn-reportsTab');
+  const stripBtnAdmin = document.getElementById('stripBtnAdminReview');
+  const stripSepAdmin = document.getElementById('stripSepAdminReview');
+  const filterAssignedWrap = document.getElementById('filterAssignedToMeWrap');
+  const kpiOverlapsCard = document.getElementById('kpiOverlapsCard');
+
+  if (currentUser.role === 'GUEST_STUDENT') {
+    if (tabOverlaps) tabOverlaps.style.display = 'none';
+    if (tabReports) tabReports.style.display = 'none';
+    if (stripBtnAdmin) stripBtnAdmin.style.display = 'none';
+    if (stripSepAdmin) stripSepAdmin.style.display = 'none';
+    if (filterAssignedWrap) filterAssignedWrap.classList.add('hidden');
+    if (kpiOverlapsCard) {
+      const kpiOverlaps = document.getElementById('kpiOverlaps');
+      if (kpiOverlaps) kpiOverlaps.textContent = 'N/A';
+      const kpiOverlapsSubtitle = document.getElementById('kpiOverlapsSubtitle');
+      if (kpiOverlapsSubtitle) kpiOverlapsSubtitle.textContent = 'Staff Oversight Only';
+    }
+  } else if (currentUser.role === 'BUREAU_OFFICER') {
+    if (tabOverlaps) tabOverlaps.style.display = 'flex';
+    if (tabReports) tabReports.style.display = 'flex';
+    if (stripBtnAdmin) stripBtnAdmin.style.display = 'inline-flex';
+    if (stripSepAdmin) stripSepAdmin.style.display = 'inline';
+    if (filterAssignedWrap) filterAssignedWrap.classList.remove('hidden');
+  } else {
+    // Admin
+    if (tabOverlaps) tabOverlaps.style.display = 'flex';
+    if (tabReports) tabReports.style.display = 'flex';
+    if (stripBtnAdmin) stripBtnAdmin.style.display = 'inline-flex';
+    if (stripSepAdmin) stripSepAdmin.style.display = 'inline';
+    if (filterAssignedWrap) filterAssignedWrap.classList.add('hidden');
   }
 }
 
@@ -1627,6 +2855,13 @@ async function loginAsPreset(username, password) {
     currentUser = data.user;
     updateUserUI();
     closeRoleSwitcherModal();
+
+    // If switching to student and currently on staff-only tab, return to dashboard
+    const activeTab = document.querySelector('.tab-content.active')?.id;
+    if (currentUser.role === 'GUEST_STUDENT' && (activeTab === 'overlapTab' || activeTab === 'reportsTab')) {
+      switchTab('dashboardTab');
+    }
+
     showToast(`Session switched to: ${currentUser.fullName} (${currentUser.role})`);
     
     // Re-establish SSE and refresh data
@@ -1679,16 +2914,16 @@ function renderDocumentsInDrawer(docs) {
         <div class="flex items-center space-x-2.5 overflow-hidden">
           <i data-lucide="${icon}" class="w-4 h-4 text-blue-600 shrink-0"></i>
           <div class="truncate">
-            <span class="font-semibold text-slate-800 block truncate">${d.original_filename}</span>
-            <span class="text-[10px] text-slate-400">${sizeKb} KB • Uploaded by ${d.uploaded_by}</span>
+            <span class="font-semibold text-slate-800 block truncate">${escapeHtml(d.original_filename)}</span>
+            <span class="text-[10px] text-slate-400">${sizeKb} KB • Uploaded by ${escapeHtml(d.uploaded_by)}</span>
           </div>
         </div>
         <div class="flex items-center space-x-1.5 shrink-0 ml-2">
-          <a href="/api/documents/${d.id}/view" target="_blank" class="px-2 py-1 bg-white hover:bg-slate-100 text-blue-700 border border-slate-200 rounded font-medium text-[11px] flex items-center space-x-1" title="View Document Inline">
+          <a href="/api/documents/${encodeURIComponent(d.id)}/view" target="_blank" class="px-2 py-1 bg-white hover:bg-slate-100 text-blue-700 border border-slate-200 rounded font-medium text-[11px] flex items-center space-x-1" title="View Document Inline">
             <i data-lucide="eye" class="w-3 h-3"></i>
             <span>View</span>
           </a>
-          <a href="/api/documents/${d.id}/download" class="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded font-medium text-[11px] flex items-center space-x-1" title="Download Document">
+          <a href="/api/documents/${encodeURIComponent(d.id)}/download" class="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded font-medium text-[11px] flex items-center space-x-1" title="Download Document">
             <i data-lucide="download" class="w-3 h-3"></i>
             <span>Download</span>
           </a>
@@ -1821,17 +3056,17 @@ async function loadNotificationLogs() {
       return `
         <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
           <div class="flex items-center justify-between">
-            <span class="font-bold text-navy-800 uppercase tracking-wide text-[11px]">${l.event_type}</span>
-            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeClass}">${l.status}</span>
+            <span class="font-bold text-navy-800 uppercase tracking-wide text-[11px]">${escapeHtml(l.event_type)}</span>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeClass}">${escapeHtml(l.status)}</span>
           </div>
-          <div class="text-slate-600">Case ID: <span class="font-mono font-semibold">${l.complaint_id}</span> • Channel: <strong>${l.channel}</strong></div>
-          <div class="text-[11px] text-slate-500">${l.provider_response || ''}</div>
-          <div class="text-[10px] text-slate-400">Timestamp: ${l.created_at}</div>
+          <div class="text-slate-600">Case ID: <span class="font-mono font-semibold">${escapeHtml(l.complaint_id)}</span> • Channel: <strong>${escapeHtml(l.channel)}</strong></div>
+          <div class="text-[11px] text-slate-500">${escapeHtml(l.provider_response || '')}</div>
+          <div class="text-[10px] text-slate-400">Timestamp: ${escapeHtml(l.created_at)}</div>
         </div>
       `;
     }).join('');
   } catch (err) {
-    container.innerHTML = `<div class="text-xs text-red-600 p-2">Error: ${err.message}</div>`;
+    container.innerHTML = `<div class="text-xs text-red-600 p-2">Error: ${escapeHtml(err.message)}</div>`;
   }
 }
 

@@ -234,6 +234,113 @@ function invalidateSession(token) {
   return res.changes > 0;
 }
 
+// -------------------------------------------------------------
+// LOGIN BRUTE-FORCE PROTECTION (per account + IP)
+// Limits to MAX_LOGIN_ATTEMPTS failed logins per (username + IP) pair within
+// LOCK_WINDOW_MS; once the limit is reached the pair is locked for LOCK_DURATION_MS.
+// Counters reset on a successful login or once the window/lock elapses, so a
+// legitimate user is never locked out permanently.
+// -------------------------------------------------------------
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCK_WINDOW_MS = 60 * 1000;    // window in which consecutive failures are counted
+const LOCK_DURATION_MS = 60 * 1000;  // how long the pair stays locked after hitting the limit
+
+const loginAttempts = new Map(); // key -> { count, firstFailedAt, lockedUntil }
+
+function loginThrottleKey(username, ip) {
+  return `${String(username || '').toLowerCase()}|${ip || 'unknown'}`;
+}
+
+// Returns current throttle state for a (username, ip) pair, clearing any
+// expired lock/window as a side effect.
+function getLoginThrottleStatus(username, ip) {
+  const key = loginThrottleKey(username, ip);
+  const entry = loginAttempts.get(key);
+  if (!entry) return { locked: false, attempts: 0, retryAfterMs: 0 };
+
+  const now = Date.now();
+
+  if (entry.lockedUntil && now >= entry.lockedUntil) {
+    // Lock period elapsed -> clear and unlock
+    loginAttempts.delete(key);
+    return { locked: false, attempts: 0, retryAfterMs: 0 };
+  }
+
+  if (!entry.lockedUntil && now - entry.firstFailedAt > LOCK_WINDOW_MS) {
+    // Failure window elapsed without hitting the limit -> reset counter
+    loginAttempts.delete(key);
+    return { locked: false, attempts: 0, retryAfterMs: 0 };
+  }
+
+  if (entry.lockedUntil && now < entry.lockedUntil) {
+    return { locked: true, attempts: entry.count, retryAfterMs: entry.lockedUntil - now };
+  }
+
+  return { locked: false, attempts: entry.count, retryAfterMs: 0 };
+}
+
+// Record a failed login attempt; locks the pair once MAX_LOGIN_ATTEMPTS is reached.
+function recordFailedLogin(username, ip) {
+  const key = loginThrottleKey(username, ip);
+  const now = Date.now();
+  let entry = loginAttempts.get(key);
+
+  // Discard an expired lock or a stale (out-of-window) counter before counting.
+  if (entry) {
+    if (entry.lockedUntil && now >= entry.lockedUntil) {
+      entry = undefined;
+    } else if (!entry.lockedUntil && now - entry.firstFailedAt > LOCK_WINDOW_MS) {
+      entry = undefined;
+    }
+  }
+
+  if (!entry) {
+    loginAttempts.set(key, { count: 1, firstFailedAt: now, lockedUntil: null });
+    return { attempts: 1, locked: false };
+  }
+
+  entry.count += 1;
+  if (entry.count >= MAX_LOGIN_ATTEMPTS) {
+    entry.lockedUntil = now + LOCK_DURATION_MS;
+  }
+  loginAttempts.set(key, entry);
+  return { attempts: entry.count, locked: !!entry.lockedUntil };
+}
+
+// Successful login clears any failure counter for the pair.
+function recordSuccessfulLogin(username, ip) {
+  loginAttempts.delete(loginThrottleKey(username, ip));
+}
+
+// Reset throttle state. With no arguments clears everything; otherwise clears a
+// single (username, ip) pair. Used by tests to avoid cross-suite contamination.
+function resetLoginThrottle(username, ip) {
+  if (username === undefined && ip === undefined) {
+    loginAttempts.clear();
+    return;
+  }
+  loginAttempts.delete(loginThrottleKey(username, ip));
+}
+
+// TEST-ONLY helper: force a pair's lock/window into the past so lock-expiry
+// behavior can be verified without waiting in real time. Accepts an optional ip
+// to target one pair; without it, expires every pair for the username. Not for
+// production use.
+function __expireLoginLockForTest(username, ip) {
+  const prefix = `${String(username || '').toLowerCase()}|`;
+  let expired = false;
+  for (const [key, entry] of loginAttempts.entries()) {
+    const matches = ip !== undefined ? key === loginThrottleKey(username, ip) : key.startsWith(prefix);
+    if (matches) {
+      entry.lockedUntil = Date.now() - 1;
+      entry.firstFailedAt = Date.now() - (LOCK_WINDOW_MS + 1000);
+      loginAttempts.set(key, entry);
+      expired = true;
+    }
+  }
+  return expired;
+}
+
 // Authenticate user with credentials
 function authenticateUser(username, password) {
   if (!username || !password) return null;
@@ -255,5 +362,11 @@ module.exports = {
   createSession,
   validateSession,
   invalidateSession,
-  authenticateUser
+  authenticateUser,
+  // Brute-force protection
+  getLoginThrottleStatus,
+  recordFailedLogin,
+  recordSuccessfulLogin,
+  resetLoginThrottle,
+  __expireLoginLockForTest
 };

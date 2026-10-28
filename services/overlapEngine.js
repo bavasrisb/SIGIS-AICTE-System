@@ -191,6 +191,15 @@ function detectAllOverlaps(complaints, existingReviews = []) {
       const a = complaints[i];
       const b = complaints[j];
 
+      // Candidate filtering (result-equivalent optimization): with different
+      // institutions the maximum achievable score is 0.35 * 1.0 = 35%
+      // (see compareComplaints), which is below the 45% flag threshold —
+      // cross-institution pairs can never be flagged, so they are skipped
+      // BEFORE the expensive tokenize/similarity work. This changes the
+      // complexity from O(n²) full comparisons to O(Σ kᵢ²) where kᵢ is the
+      // number of complaints per institution, with identical output.
+      if (a.institution_id !== b.institution_id) continue;
+
       const comparison = compareComplaints(a, b);
 
       // Flag pairs with score >= 45% (or any same institution with related category and text match)

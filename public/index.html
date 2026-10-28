@@ -72,6 +72,14 @@
           <i data-lucide="plus-circle" class="w-4 h-4"></i>
           <span>Lodge Complaint</span>
         </button>
+        <button onclick="openImportModal()" id="btnImportCsv" class="hidden items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-medium px-3 py-2 rounded-md shadow-sm transition" title="Bulk import complaints from a validated CSV file">
+          <i data-lucide="upload" class="w-4 h-4"></i>
+          <span class="hidden md:inline">Import CSV</span>
+        </button>
+        <button onclick="openUsersModal()" id="btnManageUsers" class="hidden items-center space-x-1.5 bg-indigo-700 hover:bg-indigo-800 text-white text-xs sm:text-sm font-medium px-3 py-2 rounded-md shadow-sm transition" title="Manage user accounts (Admin only)">
+          <i data-lucide="user-cog" class="w-4 h-4"></i>
+          <span class="hidden md:inline">Manage Users</span>
+        </button>
         <button onclick="confirmResetDemo()" id="btnResetDemo" class="flex items-center space-x-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs sm:text-sm font-medium px-3 py-2 rounded-md border border-slate-600 transition" title="Restore sample demo data">
           <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
           <span class="hidden md:inline">Reset Demo</span>
@@ -165,6 +173,7 @@
       <div onclick="switchTab('overlapTab')" 
            onkeydown="if(event.key==='Enter'||event.key===' ') switchTab('overlapTab')"
            role="button" tabindex="0" 
+           id="kpiOverlapsCard"
            class="bg-white p-4 rounded-xl border border-purple-200 shadow-sm flex items-center justify-between cursor-pointer hover:shadow-md hover:border-purple-300 transition focus:outline-none focus:ring-2 focus:ring-purple-500"
            title="Click to open Overlap Detection Centre">
         <div>
@@ -172,7 +181,7 @@
             <span>Overlap Alerts</span>
           </div>
           <div id="kpiOverlaps" class="text-2xl font-bold text-purple-700 mt-1">--</div>
-          <div class="text-[11px] text-purple-600 font-medium">Coordination required</div>
+          <div id="kpiOverlapsSubtitle" class="text-[11px] text-purple-600 font-medium">Coordination required</div>
         </div>
         <div class="w-10 h-10 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
           <i data-lucide="layers" class="w-5 h-5"></i>
@@ -218,6 +227,11 @@
         <button onclick="navigateToComplaints('ESCALATED')" class="hover:underline flex items-center space-x-1 text-rose-700">
           <span class="w-2 h-2 rounded-full bg-rose-500"></span>
           <span>Escalated Cases: <strong id="kpiEscalated">--</strong></span>
+        </button>
+        <span class="text-slate-300" id="stripSepAdminReview">|</span>
+        <button onclick="navigateToComplaints('PENDING_REVIEW')" id="stripBtnAdminReview" class="hover:underline flex items-center space-x-1 text-amber-700 font-semibold" title="Complaints with resolution reports submitted by officers, awaiting Central Admin approval">
+          <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+          <span>Awaiting Admin Review: <strong id="kpiPendingAdminReview">--</strong></span>
         </button>
       </div>
       <div class="text-[11px] text-slate-400">
@@ -395,6 +409,7 @@
               <option value="Under Bureau Scrutiny">Under Bureau Scrutiny</option>
               <option value="Notice Issued to Institute">Notice Issued to Institute</option>
               <option value="Hearing / Inquiry Scheduled">Hearing / Inquiry Scheduled</option>
+              <option value="PENDING_REVIEW">Pending Admin Review</option>
               <option value="TRANSFERRED">Transferred Cases</option>
               <option value="ESCALATED">Escalated Cases</option>
               <option value="Resolved">Resolved / Closed</option>
@@ -425,12 +440,18 @@
             <input type="date" id="filterDateTo" class="w-full py-1 px-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
           </div>
 
-          <!-- Overdue & Reset -->
+          <!-- Overdue & Reset & Assigned to Me -->
           <div class="flex items-center justify-between space-x-2">
-            <label class="flex items-center space-x-1 cursor-pointer text-slate-700 font-medium">
-              <input type="checkbox" id="filterOverdueOnly" class="rounded border-slate-300 text-red-600 focus:ring-red-500">
-              <span class="text-red-700 font-semibold text-[11px]">Overdue Only</span>
-            </label>
+            <div class="flex items-center space-x-3">
+              <label class="flex items-center space-x-1 cursor-pointer text-slate-700 font-medium">
+                <input type="checkbox" id="filterOverdueOnly" class="rounded border-slate-300 text-red-600 focus:ring-red-500">
+                <span class="text-red-700 font-semibold text-[11px]">Overdue Only</span>
+              </label>
+              <label id="filterAssignedToMeWrap" class="flex items-center space-x-1 cursor-pointer text-slate-700 font-medium hidden">
+                <input type="checkbox" id="filterAssignedToMe" class="rounded border-slate-300 text-purple-600 focus:ring-purple-500">
+                <span class="text-purple-700 font-semibold text-[11px]">Assigned to Me</span>
+              </label>
+            </div>
             <button onclick="resetFilters()" class="text-blue-600 hover:text-blue-800 font-medium flex items-center space-x-1 text-xs">
               <i data-lucide="filter-x" class="w-3.5 h-3.5"></i>
               <span>Clear</span>
@@ -544,6 +565,33 @@
           <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-red-100 text-red-700" id="totalOverdueBadge">
             -- Overdue Cases
           </span>
+        </div>
+      </div>
+
+      <!-- Officer Workload Monitor (Staff Only — Admin & Bureau Officers) -->
+      <div id="workloadWidget" class="hidden bg-white rounded-xl border border-blue-200 shadow-sm overflow-hidden">
+        <div class="bg-blue-50/60 px-5 py-3 border-b border-blue-200 flex items-center justify-between">
+          <span class="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center space-x-1.5">
+            <i data-lucide="users" class="w-4 h-4 text-blue-700"></i>
+            <span>Officer Workload Monitor (Real Assigned Caseload)</span>
+          </span>
+          <span class="text-[11px] text-blue-700">Fewest active cases ranked first — no performance metrics inferred</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs sm:text-sm">
+            <thead class="bg-slate-50 text-slate-600 uppercase text-[11px] font-semibold border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-4">Officer</th>
+                <th class="py-3 px-4">Bureau</th>
+                <th class="py-3 px-4">Active Cases</th>
+                <th class="py-3 px-4">Overdue</th>
+                <th class="py-3 px-4">Critical Priority</th>
+              </tr>
+            </thead>
+            <tbody id="workloadTableBody" class="divide-y divide-slate-200">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -903,10 +951,13 @@
           </select>
         </div>
 
-        <!-- Bureau Reassignment -->
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Reassign Bureau / Cell *</label>
-          <select id="editBureau" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 bg-white">
+        <!-- Bureau Reassignment (Admin Only) -->
+        <div id="editBureauWrap">
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">
+            <span>Reassign Bureau / Cell *</span>
+            <span id="editBureauAdminOnlyBadge" class="ml-1 text-[10px] text-amber-600 font-normal">(Admin Only)</span>
+          </label>
+          <select id="editBureau" required onchange="onEditBureauChanged()" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 bg-white">
             <option value="Student Grievance Redressal Cell (SGRC)">Student Grievance Redressal Cell (SGRC)</option>
             <option value="Approval Bureau">Approval Bureau</option>
             <option value="Anti-Ragging Cell">Anti-Ragging Cell</option>
@@ -937,9 +988,14 @@
 
         <!-- Assigned Officer & Next Action -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Assigned Officer</label>
-            <input type="text" id="editAssignedOfficer" placeholder="Officer Name / Role" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
+          <div id="editOfficerAssignmentWrap">
+            <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">
+              <span>Assigned Officer</span>
+              <span id="editOfficerAdminOnlyBadge" class="ml-1 text-[10px] text-amber-600 font-normal">(Admin Only)</span>
+            </label>
+            <select id="editAssignedOfficerId" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="">-- Select Assigned Officer --</option>
+            </select>
           </div>
           <div>
             <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Next Action Mandate</label>
@@ -953,10 +1009,23 @@
           <input type="text" id="editSupportingDocs" placeholder="e.g. NOTICE-REF-9921.pdf" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
         </div>
 
+        <!-- Assignment Recommendations (transparent, real-workload based) -->
+        <div id="assignRecsBox" class="hidden p-3 bg-blue-50/60 border border-blue-200 rounded-xl text-xs space-y-1.5">
+          <span class="font-bold text-blue-900 uppercase tracking-wide text-[11px]">Assignment Recommendations (fewest active cases first)</span>
+          <div id="assignRecsList" class="space-y-1.5"></div>
+          <p class="text-[10px] text-slate-400">Based only on stored data: bureau match and current active/overdue caseload. No performance or expertise metrics are inferred.</p>
+        </div>
+
+        <!-- Investigation Notes (Officer Action) -->
+        <div id="editInvestigationNotesWrap">
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Officer Investigation Findings / Notes</label>
+          <textarea id="editInvestigationNotes" rows="2" placeholder="Record confidential inquiry findings, institutional replies, or evidence notes..." class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"></textarea>
+        </div>
+
         <!-- Officer Audit Remarks -->
         <div>
           <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Action Remarks / Order Summary</label>
-          <textarea id="editRemarks" rows="3" placeholder="State official notes, notice dispatch reference, or final resolution remarks..." class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"></textarea>
+          <textarea id="editRemarks" rows="2" placeholder="State official notes, notice dispatch reference, or remarks..." class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"></textarea>
         </div>
 
         <div>
@@ -964,11 +1033,17 @@
           <input type="text" id="editOfficer" value="AICTE Grievance Desk Officer" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
         </div>
 
-        <div class="pt-4 border-t border-slate-200 flex items-center justify-end space-x-3">
-          <button type="button" onclick="closeEditModal()" class="px-4 py-2 text-sm text-slate-600 hover:text-slate-800">Cancel</button>
-          <button type="submit" class="px-5 py-2 text-sm bg-aicteBlue hover:bg-blue-900 text-white font-medium rounded-lg shadow-sm transition">
-            Save Case Changes
+        <div class="pt-4 border-t border-slate-200 flex items-center justify-between">
+          <button type="button" id="btnOpenSubmitRes" onclick="openSubmitResolutionFromEdit()" class="px-3.5 py-2 text-xs sm:text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg shadow-sm transition flex items-center space-x-1.5" title="Submit resolution report for Central Admin final review and closure">
+            <i data-lucide="send" class="w-4 h-4"></i>
+            <span>Submit for Admin Review</span>
           </button>
+          <div class="flex items-center space-x-2">
+            <button type="button" onclick="closeEditModal()" class="px-4 py-2 text-sm text-slate-600 hover:text-slate-800">Cancel</button>
+            <button type="submit" class="px-5 py-2 text-sm bg-aicteBlue hover:bg-blue-900 text-white font-medium rounded-lg shadow-sm transition">
+              Save Changes
+            </button>
+          </div>
         </div>
       </form>
     </div>
@@ -984,10 +1059,16 @@
           <span id="drawerPriorityBadge" class="text-[10px] font-bold px-2 py-0.5 rounded">--</span>
         </div>
         <h3 id="drawerSubject" class="text-base font-bold text-white mt-1 line-clamp-1">Grievance Subject</h3>
+        <div id="drawerSourceRefWrap" class="hidden text-[11px] text-slate-300 mt-0.5">
+          Source Reference: <span id="drawerSourceRef" class="font-mono font-semibold text-amber-300">--</span>
+        </div>
       </div>
       <div class="flex items-center space-x-2">
         <button onclick="printCaseDossier()" class="p-1.5 text-slate-300 hover:text-white rounded bg-white/10" title="Print Case Dossier">
           <i data-lucide="printer" class="w-4 h-4"></i>
+        </button>
+        <button onclick="openCoordinationModal()" id="drawerCoordBtn" class="hidden p-1.5 text-slate-300 hover:text-white rounded bg-white/10" title="Request cross-bureau coordination">
+          <i data-lucide="handshake" class="w-4 h-4"></i>
         </button>
         <button onclick="closeDrawer()" class="p-1.5 text-slate-300 hover:text-white rounded bg-white/10">
           <i data-lucide="x" class="w-5 h-5"></i>
@@ -1117,12 +1198,69 @@
         </div>
       </div>
 
-      <!-- Resolution Remarks (if any) -->
-      <div id="drawerResolutionBox" class="hidden">
-        <span class="text-xs font-bold text-emerald-700 uppercase tracking-wider block mb-1">Official Resolution Findings</span>
-        <div id="drawerResolutionText" class="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 whitespace-pre-line">
-          --
+      <!-- Admin Review Prompt Banner (if Pending Admin Review) -->
+      <div id="drawerAdminReviewBanner" class="bg-amber-50 border border-amber-300 rounded-xl p-4 hidden">
+        <div class="flex items-start justify-between">
+          <div class="flex items-start space-x-2.5">
+            <i data-lucide="clock" class="w-5 h-5 text-amber-600 shrink-0 mt-0.5"></i>
+            <div>
+              <h4 class="text-xs font-bold text-amber-900 uppercase">Resolution Submitted – Awaiting Central Admin Decision</h4>
+              <p class="text-xs text-amber-800 mt-0.5">Assigned officer has completed inquiry. Review report and authorize closure, return for action, or reassign.</p>
+            </div>
+          </div>
+          <button type="button" id="btnDrawerAdminReview" onclick="openAdminReviewFromDrawer()" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg shrink-0 shadow-sm transition flex items-center space-x-1">
+            <i data-lucide="gavel" class="w-3.5 h-3.5"></i>
+            <span>Review Now</span>
+          </button>
         </div>
+      </div>
+
+      <!-- Officer Submit Resolution Prompt (if active) -->
+      <div id="drawerOfficerSubmitBanner" class="bg-emerald-50 border border-emerald-300 rounded-xl p-4 hidden">
+        <div class="flex items-start justify-between">
+          <div class="flex items-start space-x-2.5">
+            <i data-lucide="check-circle" class="w-5 h-5 text-emerald-600 shrink-0 mt-0.5"></i>
+            <div>
+              <h4 class="text-xs font-bold text-emerald-900 uppercase">Inquiry In-Progress</h4>
+              <p class="text-xs text-emerald-800 mt-0.5">Once you have addressed this grievance, submit your resolution summary for Central Admin review.</p>
+            </div>
+          </div>
+          <button type="button" onclick="openSubmitResolutionFromDrawer()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shrink-0 shadow-sm transition flex items-center space-x-1">
+            <i data-lucide="send" class="w-3.5 h-3.5"></i>
+            <span>Submit for Review</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Official Approved Resolution Report (Visible to Student & Staff) -->
+      <div id="drawerResolutionBox" class="hidden">
+        <div class="border border-emerald-300 bg-emerald-50/80 rounded-xl p-4">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold text-emerald-900 uppercase tracking-wider flex items-center space-x-1.5">
+              <i data-lucide="award" class="w-4 h-4 text-emerald-700"></i>
+              <span>Official AICTE Approved Resolution Order</span>
+            </span>
+            <span id="drawerResolvedDate" class="text-[11px] font-semibold text-emerald-800">--</span>
+          </div>
+          <div id="drawerResolutionText" class="p-3 bg-white border border-emerald-200 rounded-lg text-xs text-slate-800 whitespace-pre-line leading-relaxed">
+            --
+          </div>
+        </div>
+      </div>
+
+      <!-- Cross-Bureau Coordination (Staff Only) -->
+      <div id="drawerCoordinationWrap" class="hidden">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-bold text-purple-800 uppercase tracking-wider flex items-center space-x-1.5">
+            <i data-lucide="handshake" class="w-4 h-4 text-purple-700"></i>
+            <span>Cross-Bureau Coordination</span>
+          </span>
+          <button type="button" onclick="openCoordinationModal()" class="px-2.5 py-1 bg-purple-700 hover:bg-purple-800 text-white text-[11px] font-bold rounded-lg flex items-center space-x-1 transition">
+            <i data-lucide="send" class="w-3 h-3"></i>
+            <span>Request Assistance</span>
+          </button>
+        </div>
+        <div id="drawerCoordinationList" class="space-y-1.5"></div>
       </div>
 
       <!-- Chronological Audit Trail Timeline -->
@@ -1284,6 +1422,162 @@
     </div>
   </div>
 
+  <!-- 4.1 OFFICER RESOLUTION SUBMISSION MODAL -->
+  <div id="submitResolutionModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-emerald-800 text-white rounded-t-2xl">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="check-circle-2" class="w-5 h-5 text-emerald-300"></i>
+          <div>
+            <h3 class="text-base font-bold text-white">Submit Resolution for Admin Review</h3>
+            <span id="submitResCaseId" class="text-xs font-mono text-emerald-200">--</span>
+          </div>
+        </div>
+        <button onclick="closeSubmitResolutionModal()" class="text-emerald-200 hover:text-white p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="submitResolutionForm" onsubmit="executeSubmitResolution(event)" class="p-6 space-y-4">
+        <input type="hidden" id="submitResComplaintId">
+        <div class="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900">
+          <p class="font-semibold mb-1">Standard AICTE Grievance Protocol:</p>
+          <p>Submitting this report transitions the case to <strong>Pending Admin Review</strong>. Final closure and disposition orders are authorized exclusively by Central Administration.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Case Subject</label>
+          <div id="submitResSubject" class="text-xs font-medium text-slate-800 bg-slate-50 p-2.5 rounded-lg border border-slate-200">--</div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Investigation Findings & Resolution Summary *</label>
+          <textarea id="submitResSummary" required rows="4" placeholder="Detail inquiry proceedings, institute explanation, marksheet release verification, penalty issued, or actions taken (min 10 characters)..." class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-emerald-500"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Evidence / Order Reference</label>
+          <input type="text" id="submitResDocs" placeholder="e.g. AICTE-ORDER-2026-FINAL.pdf" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-emerald-500">
+        </div>
+
+        <div class="pt-3 border-t border-slate-200 flex items-center justify-end space-x-3">
+          <button type="button" onclick="closeSubmitResolutionModal()" class="px-4 py-2 text-xs text-slate-600 hover:text-slate-800 font-medium">Cancel</button>
+          <button type="submit" class="px-5 py-2 text-xs bg-emerald-700 hover:bg-emerald-800 text-white font-semibold rounded-lg shadow-sm transition flex items-center space-x-1.5">
+            <i data-lucide="send" class="w-3.5 h-3.5"></i>
+            <span>Submit to Central Admin</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 4.2 CENTRAL ADMIN RESOLUTION REVIEW & CLOSURE MODAL -->
+  <div id="adminReviewModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full max-h-[92vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-navy-800 text-white rounded-t-2xl sticky top-0 z-10">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="gavel" class="w-5 h-5 text-amber-400"></i>
+          <div>
+            <h3 class="text-base font-bold text-white">Central Admin Resolution Review & Decision</h3>
+            <span id="adminReviewCaseId" class="text-xs font-mono text-amber-300">--</span>
+          </div>
+        </div>
+        <button onclick="closeAdminReviewModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="p-6 space-y-5">
+        <input type="hidden" id="adminReviewComplaintId">
+
+        <!-- Case Dossier Snapshot -->
+        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2 text-xs">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-navy-800" id="adminReviewSubject">--</span>
+            <span id="adminReviewBureauBadge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800">--</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-slate-600">
+            <div>Target Institution: <strong id="adminReviewInstitution">--</strong></div>
+            <div>Assigned Officer: <strong id="adminReviewOfficer">--</strong></div>
+          </div>
+        </div>
+
+        <!-- Officer's Submitted Resolution Notes -->
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Officer's Submitted Resolution & Investigation Findings</label>
+          <div id="adminReviewOfficerNotes" class="text-xs text-slate-800 bg-amber-50/50 border border-amber-200 p-3 rounded-xl whitespace-pre-wrap leading-relaxed max-h-36 overflow-y-auto">
+            --
+          </div>
+        </div>
+
+        <!-- Attached Documents for Review -->
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Supporting Evidence & Documents</label>
+          <div id="adminReviewDocumentsList" class="space-y-1.5 max-h-28 overflow-y-auto">
+            <div class="text-xs text-slate-400 italic">No attached documents</div>
+          </div>
+        </div>
+
+        <!-- Decision Action Tabs / Forms -->
+        <div class="border-t border-slate-200 pt-4">
+        <div class="text-xs font-bold text-slate-800 uppercase tracking-wide mb-3">Select Administrative Action</div>
+        <div class="grid grid-cols-3 gap-2 mb-4">
+            <button type="button" onclick="selectAdminActionTab('approve')" id="tabBtnActionApprove" class="p-2.5 rounded-xl border-2 border-emerald-600 bg-emerald-50 text-emerald-800 text-xs font-bold flex items-center justify-center space-x-1 transition">
+              <i data-lucide="check-circle" class="w-4 h-4"></i>
+              <span>Approve & Close</span>
+            </button>
+            <button type="button" onclick="selectAdminActionTab('return')" id="tabBtnActionReturn" class="p-2.5 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:border-amber-500 hover:bg-amber-50 flex items-center justify-center space-x-1 transition">
+              <i data-lucide="corner-up-left" class="w-4 h-4"></i>
+              <span>Return for Inquiry</span>
+            </button>
+            <button type="button" onclick="selectAdminActionTab('reassign')" id="tabBtnActionReassign" class="p-2.5 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:border-blue-500 hover:bg-blue-50 flex items-center justify-center space-x-1 transition">
+              <i data-lucide="user-plus" class="w-4 h-4"></i>
+              <span>Reassign Officer</span>
+            </button>
+          </div>
+
+          <!-- 1. APPROVE PANEL -->
+          <div id="panelActionApprove" class="space-y-3">
+            <label class="block text-xs font-semibold text-emerald-900 uppercase">Official Closure Order / Final Report Remarks *</label>
+            <textarea id="adminReviewApproveRemarks" rows="3" placeholder="Enter official AICTE closure order text. This will be made available to the original student complainant as the final approved resolution..." class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-emerald-500"></textarea>
+            <button type="button" onclick="executeAdminDecision('APPROVE')" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center justify-center space-x-1.5">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>Formally Approve Resolution & Issue Closure Order</span>
+            </button>
+          </div>
+
+          <!-- 2. RETURN PANEL -->
+          <div id="panelActionReturn" class="space-y-3 hidden">
+            <label class="block text-xs font-semibold text-amber-900 uppercase">Return Reason & Mandatory Action Instructions *</label>
+            <textarea id="adminReviewReturnReason" rows="3" placeholder="Specify why this report is insufficient (e.g. proof of marksheet handover missing, institute principal signature absent, further testimony needed)..." class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-amber-500"></textarea>
+            <button type="button" onclick="executeAdminDecision('RETURN')" class="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center justify-center space-x-1.5">
+              <i data-lucide="corner-up-left" class="w-4 h-4"></i>
+              <span>Return Case to Officer Queue for Further Inquiry</span>
+            </button>
+          </div>
+
+          <!-- 3. REASSIGN PANEL -->
+          <div id="panelActionReassign" class="space-y-3 hidden">
+            <div>
+              <label class="block text-xs font-semibold text-blue-900 uppercase mb-1">Select Target Officer *</label>
+              <select id="adminReviewOfficerSelect" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 bg-white">
+                <option value="">-- Choose New Officer --</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-blue-900 uppercase mb-1">Mandatory Reassignment Reason *</label>
+              <textarea id="adminReviewReassignReason" rows="2" placeholder="State official rationale for reassigning inquiry officer..." class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500"></textarea>
+            </div>
+            <button type="button" onclick="executeAdminDecision('REASSIGN')" class="w-full py-2.5 bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center justify-center space-x-1.5">
+              <i data-lucide="user-check" class="w-4 h-4"></i>
+              <span>Reassign Case to Selected Officer</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 6. DEMO ROLE SWITCHER / AUTHENTICATION MODAL -->
   <div id="roleModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full max-h-[92vh] overflow-y-auto">
@@ -1395,6 +1689,9 @@
         <div>
           <h3 class="text-base font-bold text-navy-800">SLA & Escalation Notification Audit Trail</h3>
           <p class="text-xs text-slate-500">Tracks SLA alerts, escalation notices, and duplicate suppression</p>
+          <p class="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 mt-1 inline-block">
+            <strong>Delivery status: SIMULATED_LOCAL.</strong> No external email/SMS gateway is configured in this deployment — every alert is logged here with its delivery state and shown in-app, but no real message leaves the system. A webhook provider can be attached via configuration without code changes.
+          </p>
         </div>
         <button onclick="closeNotificationLogsModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
           <i data-lucide="x" class="w-5 h-5"></i>
@@ -1419,6 +1716,198 @@
             <!-- Populated dynamically -->
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- USER MANAGEMENT MODAL (ADMIN ONLY) -->
+  <div id="usersModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-indigo-800 text-white rounded-t-2xl sticky top-0 z-10">
+        <div>
+          <h3 class="text-base font-bold">User Management</h3>
+          <span class="text-xs text-indigo-200">List existing accounts and create new officer / student logins</span>
+        </div>
+        <button onclick="closeUsersModal()" class="text-indigo-200 hover:text-white p-1 rounded-lg" aria-label="Close user management dialog">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="p-6 space-y-5 text-sm">
+        <!-- Create user form -->
+        <form onsubmit="submitCreateUser(event)" class="space-y-3 p-4 bg-indigo-50/50 border border-indigo-200 rounded-xl">
+          <span class="font-bold text-indigo-900 uppercase tracking-wide text-xs">Create New Account</span>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label for="newUserUsername" class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Username (email) *</label>
+              <input id="newUserUsername" type="email" required placeholder="officer.name@aicte.gov.in" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 bg-white" />
+            </div>
+            <div>
+              <label for="newUserFullName" class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Full Name *</label>
+              <input id="newUserFullName" type="text" required minlength="3" placeholder="Prof. S. Krishnan" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 bg-white" />
+            </div>
+            <div>
+              <label for="newUserRole" class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Role *</label>
+              <select id="newUserRole" required onchange="onNewUserRoleChanged()" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 bg-white">
+                <option value="BUREAU_OFFICER">Bureau Officer</option>
+                <option value="ADMIN">Administrator</option>
+                <option value="GUEST_STUDENT">Student / Complainant</option>
+              </select>
+            </div>
+            <div>
+              <label for="newUserBureau" class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Bureau <span id="newUserBureauReq" class="text-amber-600">*</span></label>
+              <select id="newUserBureau" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 bg-white">
+                <option value="">-- None (Admin / Student) --</option>
+                <option value="Student Grievance Redressal Cell (SGRC)">Student Grievance Redressal Cell (SGRC)</option>
+                <option value="Approval Bureau">Approval Bureau</option>
+                <option value="Anti-Ragging Cell">Anti-Ragging Cell</option>
+                <option value="Faculty & Staff Grievance Cell">Faculty & Staff Grievance Cell</option>
+                <option value="Vigilance Cell">Vigilance Cell</option>
+                <option value="Legal Cell">Legal Cell</option>
+                <option value="Regional Bureau / Regional Office (RB)">Regional Bureau / Regional Office (RB)</option>
+                <option value="Public Grievance Redressal Cell (PGRC)">Public Grievance Redressal Cell (PGRC)</option>
+              </select>
+            </div>
+            <div>
+              <label for="newUserPassword" class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Password * (min 8 chars)</label>
+              <input id="newUserPassword" type="password" required minlength="8" placeholder="Minimum 8 characters" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 bg-white" />
+            </div>
+            <div class="flex items-end">
+              <button type="submit" class="w-full px-4 py-2 text-sm bg-indigo-700 hover:bg-indigo-800 text-white font-medium rounded-lg shadow-sm transition">Create Account</button>
+            </div>
+          </div>
+          <p class="text-[10px] text-slate-500">New accounts take effect immediately — the person can log in with the username and password set here. Passwords are stored only as scrypt hashes.</p>
+        </form>
+
+        <!-- Existing accounts list -->
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-slate-700 uppercase tracking-wide text-xs">Existing Accounts</span>
+            <span id="usersListCount" class="text-xs text-slate-400">--</span>
+          </div>
+          <div class="overflow-x-auto border border-slate-200 rounded-xl">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-50 text-slate-600 uppercase text-[10px] font-semibold border-b border-slate-200">
+                <tr>
+                  <th class="py-2.5 px-3">Full Name</th>
+                  <th class="py-2.5 px-3">Username</th>
+                  <th class="py-2.5 px-3">Role</th>
+                  <th class="py-2.5 px-3">Bureau</th>
+                  <th class="py-2.5 px-3">Created</th>
+                  <th class="py-2.5 px-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody id="usersTableBody" class="divide-y divide-slate-100">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CROSS-BUREAU COORDINATION REQUEST MODAL -->
+  <div id="coordinationModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-purple-800 text-white rounded-t-2xl">
+        <div>
+          <h3 class="text-base font-bold">Request Cross-Bureau Coordination</h3>
+          <span id="coordCaseId" class="text-xs font-mono text-purple-200">--</span>
+        </div>
+        <button onclick="closeCoordinationModal()" class="text-purple-200 hover:text-white p-1 rounded-lg" aria-label="Close coordination dialog">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form onsubmit="submitCoordinationRequest(event)" class="p-6 space-y-4 text-sm">
+        <p class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3">
+          This sends an explicit, auditable assistance request from this case's bureau to another bureau.
+          The case is <strong>not</strong> transferred or merged; the receiving bureau may accept, reject, or complete it, and every decision is recorded in the case history.
+        </p>
+        <div>
+          <label for="coordBureauSelect" class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Receiving Bureau *</label>
+          <select id="coordBureauSelect" required class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500 bg-white"></select>
+        </div>
+        <div>
+          <label for="coordReason" class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Coordination Reason * (min 10 characters)</label>
+          <textarea id="coordReason" required rows="3" placeholder="e.g. Need Approval Bureau precedent on fee irregularity before issuing notice..." class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500"></textarea>
+        </div>
+        <div class="pt-3 border-t border-slate-200 flex items-center justify-end space-x-3">
+          <button type="button" onclick="closeCoordinationModal()" class="px-4 py-2 text-sm text-slate-600 hover:text-slate-800">Cancel</button>
+          <button type="submit" class="px-5 py-2 text-sm bg-purple-700 hover:bg-purple-800 text-white font-medium rounded-lg shadow-sm transition">Submit Request</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- CSV IMPORT MODAL (ADMIN / BUREAU OFFICER) -->
+  <div id="importCsvModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-emerald-800 text-white rounded-t-2xl">
+        <div>
+          <h3 class="text-base font-bold">Import Complaints from CSV</h3>
+          <span class="text-[11px] text-emerald-100">Validated bulk registration with source references &mdash; simulated internal AICTE ingestion channel</span>
+        </div>
+        <button onclick="closeImportModal()" class="text-emerald-100 hover:text-white p-1 rounded-lg" aria-label="Close import dialog">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="p-6 space-y-4 text-sm">
+        <!-- Format guidance -->
+        <div class="text-xs bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-600 leading-relaxed">
+          <strong class="text-slate-800">Required columns:</strong>
+          <code class="text-[11px] bg-slate-100 px-1 rounded">source_reference</code>,
+          <code class="text-[11px] bg-slate-100 px-1 rounded">institution_id</code>,
+          <code class="text-[11px] bg-slate-100 px-1 rounded">bureau</code>,
+          <code class="text-[11px] bg-slate-100 px-1 rounded">category</code>,
+          <code class="text-[11px] bg-slate-100 px-1 rounded">priority</code> (CRITICAL|HIGH|MEDIUM|LOW),
+          <code class="text-[11px] bg-slate-100 px-1 rounded">complainant_name</code>,
+          <code class="text-[11px] bg-slate-100 px-1 rounded">subject</code>,
+          <code class="text-[11px] bg-slate-100 px-1 rounded">description</code>.
+          <br>Optional: complainant_role, complainant_email, complainant_phone, target_date (YYYY-MM-DD, defaults +30 days), assigned_officer.
+          Imported cases start at <strong>Submitted</strong>; rows whose source reference already exists are reported as duplicates and never overwrite the original case.
+        </div>
+
+        <!-- Step 1: File picker -->
+        <div>
+          <label for="importCsvFile" class="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">1. Select CSV file (.csv only)</label>
+          <input type="file" id="importCsvFile" accept=".csv,text/csv" onchange="handleImportCsvFileSelected(event)"
+            class="w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-100 file:text-emerald-800 hover:file:bg-emerald-200 border border-slate-300 rounded-lg p-1.5 bg-white">
+          <p id="importCsvFileInfo" class="text-xs text-slate-500 mt-1" role="status">No file selected.</p>
+        </div>
+
+        <!-- Step 2: Preview -->
+        <div id="importCsvPreviewWrap" class="hidden">
+          <div class="flex items-center justify-between mb-1">
+            <span class="block text-xs font-bold text-slate-600 uppercase tracking-wide">2. Preview (first rows)</span>
+            <span id="importCsvPreviewMeta" class="text-xs text-slate-500"></span>
+          </div>
+          <div class="overflow-auto border border-slate-200 rounded-lg max-h-48">
+            <table class="min-w-full text-[11px] text-left">
+              <thead id="importCsvPreviewHead" class="bg-slate-100 text-slate-500 uppercase text-[10px] sticky top-0"></thead>
+              <tbody id="importCsvPreviewBody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Preview is indicative only &mdash; the server re-validates every row and reports line-numbered errors after import.</p>
+        </div>
+
+        <!-- Step 3: Confirm -->
+        <div class="flex items-center justify-between pt-3 border-t border-slate-100">
+          <p class="text-xs text-slate-500">3. Nothing is imported until you confirm.</p>
+          <div class="flex items-center space-x-2">
+            <button onclick="closeImportModal()" class="px-3 py-2 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold transition">Cancel</button>
+            <button id="importCsvSubmitBtn" onclick="confirmImportCsv()" disabled
+              class="px-4 py-2 text-xs bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg font-bold inline-flex items-center space-x-1.5 transition">
+              <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+              <span id="importCsvSubmitLabel">Import</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Results -->
+        <div id="importCsvResults" class="hidden space-y-3"></div>
       </div>
     </div>
   </div>
