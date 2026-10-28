@@ -2917,11 +2917,11 @@ app.use((err, req, res, next) => {
 
 // Start Server if executed directly
 if (require.main === module) {
-  app.listen(PORT, '127.0.0.1', () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`=======================================================`);
     console.log(` AICTE Smart Institution Grievance Intelligence System`);
     console.log(` Problem Statement: SIH26264 | SIH 2026 Working Demo`);
-    console.log(` Server active on: http://localhost:${PORT}`);
+    console.log(` Server active on: http://localhost:${PORT} AND http://0.0.0.0:${PORT}`);
     console.log(` Database: Persistent SQLite (grievance_system.db)`);
     console.log(`=======================================================`);
   });
